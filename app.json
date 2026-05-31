@@ -1,13 +1,15 @@
 {
   "expo": {
-    "name": "BPKScanner",
-    "slug": "BPKScanner",
+    "name": "BPK Scanner",
+    "slug": "BPK Scanner",
     "version": "1.0.0",
+    "scheme": "com.bpkscanner",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bpkscanner"
     },
     "android": {
       "adaptiveIcon": {
@@ -16,10 +18,34 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.bpkscanner",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "com.bpkscanner"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "af925b73-d891-40a3-b5e0-620ba2ee2204"
+      }
+    },
+    "plugins": [
+      "expo-web-browser"
+    ]
   }
 }
