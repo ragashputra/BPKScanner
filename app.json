@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "BPK Scanner",
-    "slug": "BPK Scanner",
+    "slug": "BPKScanner",
     "version": "1.0.0",
     "scheme": "com.bpkscanner",
     "orientation": "portrait",
