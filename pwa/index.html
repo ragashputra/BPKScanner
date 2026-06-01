@@ -670,7 +670,7 @@ svg { display:block; }
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22,4 12,14.01 9,11.01"/></svg>
                 Terhubung
               </div>
-              <button class="btn-danger-outline" id="logoutBtn">Putuskan</button>
+              <button class="btn-danger-outline" id="logoutBtn">Logout</button>
             </div>
           </div>
         </div>
@@ -694,7 +694,7 @@ svg { display:block; }
           </div>
           <div class="label">Folder ID</div>
           <div class="input-row">
-            <input type="text" id="folderInput" placeholder="Paste Folder ID di sini" autocomplete="off" autocapitalize="none" style="flex:1"/>
+            <input type="text" id="folderInput" placeholder="Paste link atau ID folder Drive" autocomplete="off" autocapitalize="none" style="flex:1"/>
             <button class="btn btn-sm btn-accent" id="folderBtn">Simpan</button>
           </div>
           <div class="card-sub hidden" id="folderIdHint" style="margin-top:4px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
@@ -792,20 +792,6 @@ svg { display:block; }
     <div class="modal-btn-row">
       <button class="btn-modal-cancel" id="unitUbahCancel">Batal</button>
       <button class="btn-modal-confirm" id="unitUbahConfirm">Ubah</button>
-    </div>
-  </div>
-</div>
-
-<div class="modal-overlay" id="logoutModal">
-  <div class="modal-box">
-    <div class="modal-icon" style="background:var(--danger-bg)">
-      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-    </div>
-    <div class="modal-title">Putuskan Akun Google?</div>
-    <div class="modal-desc">Sesi Google Drive akan dihapus. Kamu perlu login ulang untuk mengupload dokumen.</div>
-    <div class="modal-btn-row">
-      <button class="btn-modal-cancel" id="logoutModalCancel">Batal</button>
-      <button class="btn-modal-confirm" id="logoutModalConfirm" style="background:var(--danger)">Putuskan</button>
     </div>
   </div>
 </div>
@@ -1238,27 +1224,10 @@ function renderGoogleSection() {
   const logd  = document.getElementById('googleLoggedSection');
   sub.textContent = state.isLoggedIn ? 'Akun terhubung' : 'Belum login';
   login.classList.toggle('hidden', state.isLoggedIn);
-  // Fix: toggle both class AND inline style
-  logd.classList.toggle('hidden', !state.isLoggedIn);
   logd.style.display = state.isLoggedIn ? 'flex' : 'none';
 }
 document.getElementById('loginBtn').addEventListener('click', startLogin);
-
-// Logout dengan konfirmasi modal
-document.getElementById('logoutBtn').addEventListener('click', () => {
-  document.getElementById('logoutModal').classList.add('open');
-});
-document.getElementById('logoutModalCancel').addEventListener('click', () => {
-  document.getElementById('logoutModal').classList.remove('open');
-});
-document.getElementById('logoutModalConfirm').addEventListener('click', async () => {
-  document.getElementById('logoutModal').classList.remove('open');
-  await logout();
-});
-// Tutup modal jika tap di luar
-document.getElementById('logoutModal').addEventListener('click', function(e) {
-  if (e.target === this) this.classList.remove('open');
-});
+document.getElementById('logoutBtn').addEventListener('click', logout);
 
 // ════════════════════════════════════════════════════════════════════════════
 // FOLDER DRIVE
@@ -1281,8 +1250,15 @@ function renderFolderSection() {
 }
 document.getElementById('folderInput').addEventListener('input', e => { state.folderInput = e.target.value; });
 document.getElementById('folderBtn').addEventListener('click', async () => {
-  const val = document.getElementById('folderInput').value.trim();
+  let val = document.getElementById('folderInput').value.trim();
   if (!val) { showToast('Folder ID tidak boleh kosong','error'); return; }
+  // Auto-extract: kalau user paste URL Drive, ambil ID-nya saja
+  const match = val.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (match) {
+    val = match[1];
+    document.getElementById('folderInput').value = val;
+    state.folderInput = val;
+  }
   const now = new Date();
   const monthKey = `${now.getFullYear()}-${now.getMonth()}`;
   await dbSet('folder_id', val);
