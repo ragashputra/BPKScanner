@@ -515,17 +515,25 @@ svg { display:block; }
 }
 /* Corner handles for perspective */
 .corner-handle {
-  position: absolute; width: 28px; height: 28px;
-  border-radius: 14px;
+  position: absolute; width: 36px; height: 36px;
+  border-radius: 18px;
   background: rgba(79,70,229,.9);
   border: 3px solid #fff;
   transform: translate(-50%, -50%);
   cursor: grab; touch-action: none;
-  box-shadow: 0 2px 10px rgba(0,0,0,.5);
-  transition: transform .1s;
+  box-shadow: 0 2px 12px rgba(0,0,0,.6);
+  transition: transform .08s;
   z-index: 10;
+  /* Larger invisible hit area for easier iOS touch */
+  -webkit-tap-highlight-color: transparent;
 }
-.corner-handle:active { transform: translate(-50%,-50%) scale(1.2); }
+.corner-handle::after {
+  content: '';
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+}
+.corner-handle:active { transform: translate(-50%,-50%) scale(1.25); background: #4F46E5; }
 .corner-line-svg {
   position: absolute; inset: 0; pointer-events: none; z-index: 5;
 }
@@ -1329,6 +1337,7 @@ const scanEditor = {
   sharpness: 3,
   corners: null,
   dragCorner: null,
+  dragTouchId: null,
 };
 
 // ── Open editor ──────────────────────────────────────────────────────────
@@ -1388,11 +1397,32 @@ function createOrientedCanvas(img, ori) {
   return oc;
 }
 
+// ── Sort 4 pts into { tl, tr, bl, br } robustly ──────────────────────────
+function sortCorners(pts) {
+  // Center of mass
+  const cx = pts.reduce((s,p)=>s+p.x,0)/4;
+  const cy = pts.reduce((s,p)=>s+p.y,0)/4;
+  const tl = pts.filter(p=>p.x<=cx&&p.y<=cy).sort((a,b)=>(a.x+a.y)-(b.x+b.y))[0];
+  const tr = pts.filter(p=>p.x> cx&&p.y<=cy).sort((a,b)=>(b.x-b.y)-(a.x-a.y))[0];
+  const bl = pts.filter(p=>p.x<=cx&&p.y> cy).sort((a,b)=>(a.x-a.y)-(b.x-b.y))[0];
+  const br = pts.filter(p=>p.x> cx&&p.y> cy).sort((a,b)=>(b.x+b.y)-(a.x+a.y))[0];
+  if (!tl||!tr||!bl||!br) {
+    // Fallback: sum/diff method
+    pts.sort((a,b)=>(a.x+a.y)-(b.x+b.y));
+    const ftl=pts[0], fbr=pts[3];
+    const mid=[pts[1],pts[2]];
+    const ftr=mid[0].x>mid[1].x?mid[0]:mid[1];
+    const fbl=mid[0].x>mid[1].x?mid[1]:mid[0];
+    return {tl:ftl,tr:ftr,bl:fbl,br:fbr};
+  }
+  return {tl,tr,bl,br};
+}
+
 // ── OpenCV: detect document corners (findContours + approxPolyDP) ─────────
 function cvDetectCorners(srcCanvas) {
   // Returns { tl, tr, bl, br } as fractions 0-1, or null on failure
   if (typeof cv === 'undefined' || !window._cvReady) return null;
-  let src, gray, blur, edges, contours, hierarchy, best;
+  let src, gray, blur, edges, contours, hierarchy;
   try {
     src       = cv.imread(srcCanvas);
     gray      = new cv.Mat();
@@ -1402,94 +1432,134 @@ function cvDetectCorners(srcCanvas) {
     hierarchy = new cv.Mat();
 
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0);
-    cv.Canny(blur, edges, 75, 200);
-
-    // Dilate edges slightly so contours connect better
-    const kernel = cv.Mat.ones(3,3,cv.CV_8U);
-    cv.dilate(edges, edges, kernel);
-    kernel.delete();
-
-    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+    // Slightly stronger blur to reduce noise in phone photos
+    cv.GaussianBlur(gray, blur, new cv.Size(7,7), 0);
 
     const W = srcCanvas.width, H = srcCanvas.height;
     const imgArea = W * H;
-    let bestArea = 0;
-    let bestPoly = null;
 
-    for (let i=0; i<contours.size(); i++) {
-      const cnt  = contours.get(i);
-      const peri = cv.arcLength(cnt, true);
-      const poly = new cv.Mat();
-      cv.approxPolyDP(cnt, poly, 0.02*peri, true);
+    // Multi-pass Canny: try progressively looser thresholds
+    const cannyPasses = [[40,120],[25,80],[10,50]];
+    let bestResult = null;
+    let bestArea   = 0;
 
-      if (poly.rows === 4) {
-        const area = Math.abs(cv.contourArea(poly));
-        if (area > bestArea && area > imgArea*0.1 && area < imgArea*0.98) {
-          bestArea = area;
-          if (bestPoly) bestPoly.delete();
-          bestPoly = poly;
-        } else poly.delete();
-      } else poly.delete();
-      cnt.delete();
-    }
+    for (const [lo, hi] of cannyPasses) {
+      cv.Canny(blur, edges, lo, hi);
+      // Dilate more aggressively to close gaps in document borders
+      const kernel = cv.Mat.ones(5,5,cv.CV_8U);
+      cv.dilate(edges, edges, kernel, new cv.Point(-1,-1), 2);
+      kernel.delete();
 
-    if (bestPoly) {
-      // Extract 4 points and sort into tl, tr, bl, br
-      const pts = [];
-      for (let i=0;i<4;i++) pts.push({ x: bestPoly.data32S[i*2]/W, y: bestPoly.data32S[i*2+1]/H });
-      bestPoly.delete();
+      contours.delete(); contours = new cv.MatVector();
+      hierarchy.delete(); hierarchy = new cv.Mat();
+      cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-      // Sort: tl=min(x+y), br=max(x+y), tr=min(y-x), bl=max(y-x)
-      pts.sort((a,b)=>(a.x+a.y)-(b.x+b.y));
-      const tl = pts[0], br = pts[3];
-      const mid = [pts[1],pts[2]];
-      const tr  = mid[0].x > mid[1].x ? mid[0] : mid[1];
-      const bl  = mid[0].x > mid[1].x ? mid[1] : mid[0];
+      for (let i=0; i<contours.size(); i++) {
+        const cnt  = contours.get(i);
+        const peri = cv.arcLength(cnt, true);
+        if (peri < 100) { cnt.delete(); continue; }
 
-      // Sanity check
-      if (tr.x-tl.x > 0.15 && bl.y-tl.y > 0.15) {
-        best = { tl, tr, bl, br };
+        // Try multiple epsilon values for better polygon approximation
+        for (const eps of [0.015, 0.02, 0.03, 0.04]) {
+          const poly = new cv.Mat();
+          cv.approxPolyDP(cnt, poly, eps*peri, true);
+          if (poly.rows === 4) {
+            const area = Math.abs(cv.contourArea(poly));
+            // Accept if large enough and convex
+            if (area > bestArea && area > imgArea*0.08 && area < imgArea*0.99 && cv.isContourConvex(poly)) {
+              bestArea = area;
+              const pts = [];
+              for (let j=0;j<4;j++) pts.push({ x: poly.data32S[j*2]/W, y: poly.data32S[j*2+1]/H });
+              const sorted = sortCorners(pts);
+              // Sanity: must span at least 20% in both axes
+              const spanX = Math.max(sorted.tr.x,sorted.br.x) - Math.min(sorted.tl.x,sorted.bl.x);
+              const spanY = Math.max(sorted.bl.y,sorted.br.y) - Math.min(sorted.tl.y,sorted.tr.y);
+              if (spanX > 0.20 && spanY > 0.20) bestResult = sorted;
+            }
+            poly.delete(); break;
+          }
+          poly.delete();
+        }
+        cnt.delete();
       }
+      if (bestResult && bestArea > imgArea*0.25) break; // Good enough, stop early
     }
-  } catch(e) { console.warn('cv detect error', e); }
+    return bestResult;
+  } catch(e) { console.warn('cv detect error', e); return null; }
   finally {
     try { src?.delete(); gray?.delete(); blur?.delete(); edges?.delete(); contours?.delete(); hierarchy?.delete(); } catch(e){}
   }
-  return best || null;
 }
 
-// ── Fallback: pure-JS Sobel edge scan ─────────────────────────────────────
+// ── Fallback: pure-JS edge scan (scan all 4 edges with gradient projection) ─
 function fallbackDetectCorners(canvas) {
   const ctx  = canvas.getContext('2d', { willReadFrequently:true });
   const w    = canvas.width, h = canvas.height;
   const data = ctx.getImageData(0,0,w,h).data;
-  const step = 4;
-  function grad(x,y) {
-    if (x<=0||y<=0||x>=w-1||y>=h-1) return 0;
-    const i=(y*w+x)*4;
-    const gx=data[i+4]-data[i-4], gy=data[(y+1)*w*4+x*4]-data[(y-1)*w*4+x*4];
+
+  // Convert to grayscale array
+  const gray = new Float32Array(w*h);
+  for (let i=0;i<w*h;i++) gray[i] = 0.299*data[i*4]+0.587*data[i*4+1]+0.114*data[i*4+2];
+
+  // Sobel magnitude
+  function sobel(x,y) {
+    if (x<1||y<1||x>=w-1||y>=h-1) return 0;
+    const gx = -gray[(y-1)*w+(x-1)] + gray[(y-1)*w+(x+1)]
+               -2*gray[y*w+(x-1)]   + 2*gray[y*w+(x+1)]
+               -gray[(y+1)*w+(x-1)] + gray[(y+1)*w+(x+1)];
+    const gy = -gray[(y-1)*w+(x-1)] -2*gray[(y-1)*w+x] - gray[(y-1)*w+(x+1)]
+               +gray[(y+1)*w+(x-1)] +2*gray[(y+1)*w+x] + gray[(y+1)*w+(x+1)];
     return Math.sqrt(gx*gx+gy*gy);
   }
-  function findEdge(axis, from, to, oFrom, oTo) {
-    const size=axis==='row'?h:w, other=axis==='row'?w:h;
-    const f=Math.round(from*size), t=Math.round(to*size);
-    const of=Math.round(oFrom*other), ot=Math.round(oTo*other);
-    let best=from, bestG=-1;
-    for(let i=f;i<=t;i+=step){
+
+  const step = 2;
+  // Find top edge: scan rows from top, sum gradient across middle columns
+  function findTopEdge() {
+    let best=0.05, bestG=0;
+    for(let y=Math.round(h*0.02); y<Math.round(h*0.5); y+=step) {
       let g=0,c=0;
-      for(let j=of;j<ot;j+=step){ g+=axis==='row'?grad(j,i):grad(i,j); c++; }
-      const avg=c>0?g/c:0;
-      if(avg>bestG){bestG=avg;best=i/size;}
+      for(let x=Math.round(w*0.15);x<Math.round(w*0.85);x+=step){g+=sobel(x,y);c++;}
+      const avg=c?g/c:0; if(avg>bestG){bestG=avg;best=y/h;}
     }
     return best;
   }
-  const t=findEdge('row',0.04,0.40,0.2,0.8);
-  const b=findEdge('row',0.60,0.96,0.2,0.8);
-  const l=findEdge('col',0.04,0.40,0.2,0.8);
-  const r=findEdge('col',0.60,0.96,0.2,0.8);
-  if(r-l<0.25||b-t<0.25) return {tl:{x:0.04,y:0.03},tr:{x:0.96,y:0.03},bl:{x:0.04,y:0.97},br:{x:0.96,y:0.97}};
-  return {tl:{x:l,y:t},tr:{x:r,y:t},bl:{x:l,y:b},br:{x:r,y:b}};
+  function findBottomEdge() {
+    let best=0.95, bestG=0;
+    for(let y=Math.round(h*0.5); y<Math.round(h*0.98); y+=step) {
+      let g=0,c=0;
+      for(let x=Math.round(w*0.15);x<Math.round(w*0.85);x+=step){g+=sobel(x,y);c++;}
+      const avg=c?g/c:0; if(avg>bestG){bestG=avg;best=y/h;}
+    }
+    return best;
+  }
+  function findLeftEdge() {
+    let best=0.05, bestG=0;
+    for(let x=Math.round(w*0.02); x<Math.round(w*0.5); x+=step) {
+      let g=0,c=0;
+      for(let y=Math.round(h*0.15);y<Math.round(h*0.85);y+=step){g+=sobel(x,y);c++;}
+      const avg=c?g/c:0; if(avg>bestG){bestG=avg;best=x/w;}
+    }
+    return best;
+  }
+  function findRightEdge() {
+    let best=0.95, bestG=0;
+    for(let x=Math.round(w*0.5); x<Math.round(w*0.98); x+=step) {
+      let g=0,c=0;
+      for(let y=Math.round(h*0.15);y<Math.round(h*0.85);y+=step){g+=sobel(x,y);c++;}
+      const avg=c?g/c:0; if(avg>bestG){bestG=avg;best=x/w;}
+    }
+    return best;
+  }
+
+  const t=findTopEdge(), b=findBottomEdge();
+  const l=findLeftEdge(), r=findRightEdge();
+
+  // If detection is not meaningful, use safe defaults with small inset
+  if(r-l<0.25||b-t<0.25) return {tl:{x:0.03,y:0.03},tr:{x:0.97,y:0.03},bl:{x:0.03,y:0.97},br:{x:0.97,y:0.97}};
+  // Clamp to image bounds with small inset
+  const cl=Math.max(0.01,l), cr=Math.min(0.99,r);
+  const ct=Math.max(0.01,t), cb=Math.min(0.99,b);
+  return {tl:{x:cl,y:ct},tr:{x:cr,y:ct},bl:{x:cl,y:cb},br:{x:cr,y:cb}};
 }
 
 // ── loadNextInEditor: EXIF → orient → OpenCV detect → show editor ─────────
@@ -1520,8 +1590,8 @@ function loadNextInEditor() {
 
           // 3. Detect corners: try OpenCV first, fallback to Sobel
           const smallC  = document.createElement('canvas');
-          const maxSide = 600;
-          const sc = Math.min(maxSide/oc.width, maxSide/oc.height);
+          const maxSide = 800; // larger = better detection accuracy
+          const sc = Math.min(maxSide/oc.width, maxSide/oc.height, 1);
           smallC.width  = Math.round(oc.width*sc);
           smallC.height = Math.round(oc.height*sc);
           smallC.getContext('2d').drawImage(oc,0,0,smallC.width,smallC.height);
@@ -1625,11 +1695,13 @@ function drawEditorPreview() {
   const canvas = document.getElementById('scanCanvas');
   const ctx    = canvas.getContext('2d', { willReadFrequently: true });
   const img    = scanEditor.sourceImg;
+  if (!img) return;
 
-  // Fit canvas to wrap
-  const wrapW = wrap.clientWidth  || window.innerWidth  - 24;
-  const wrapH = wrap.clientHeight || window.innerHeight * 0.45;
-  const scale = Math.min(wrapW / img.naturalWidth, wrapH / img.naturalHeight);
+  // Use actual rendered size of the wrap container
+  const wrapRect = wrap.getBoundingClientRect();
+  const wrapW = wrapRect.width  || (window.innerWidth  - 24);
+  const wrapH = wrapRect.height || (window.innerHeight * 0.50);
+  const scale = Math.min(wrapW / img.naturalWidth, wrapH / img.naturalHeight, 1);
   canvas.width  = Math.round(img.naturalWidth  * scale);
   canvas.height = Math.round(img.naturalHeight * scale);
 
@@ -1640,7 +1712,7 @@ function drawEditorPreview() {
   const { tl, tr, bl, br } = scanEditor.corners;
   const cw = canvas.width, ch = canvas.height;
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fillRect(0, 0, cw, ch);
   // Cut out the selection polygon (show original through)
   ctx.globalCompositeOperation = 'destination-out';
@@ -1671,6 +1743,13 @@ function drawEditorPreview() {
   ctx.lineTo(bl.x*cw, bl.y*ch);
   ctx.closePath();
   ctx.stroke();
+  // Draw corner dots on canvas too for visual feedback
+  ctx.setLineDash([]);
+  [[tl.x*cw,tl.y*ch],[tr.x*cw,tr.y*ch],[br.x*cw,br.y*ch],[bl.x*cw,bl.y*ch]].forEach(([x,y])=>{
+    ctx.beginPath(); ctx.arc(x,y,5,0,Math.PI*2);
+    ctx.fillStyle='#4F46E5'; ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();
+  });
   ctx.restore();
 
   updateCornerHandles();
@@ -1793,22 +1872,29 @@ function updateCornerLines() {
   );
 }
 
-// ── Corner drag (touch + mouse) ──────────────────────────────────────────
+// ── Corner drag (touch + mouse) — iOS-optimized ───────────────────────────
 function initCornerDrag() {
   ['tl','tr','bl','br'].forEach(key => {
     const el = document.getElementById(`ch-${key}`);
+
     const onStart = (e) => {
       e.preventDefault(); e.stopPropagation();
       scanEditor.dragCorner = key;
+      scanEditor.dragTouchId = e.touches ? e.touches[0].identifier : null;
     };
+
     const onMove = (e) => {
       if (scanEditor.dragCorner !== key) return;
       e.preventDefault();
-      const touch   = e.touches ? e.touches[0] : e;
+      let touch;
+      if (e.touches) {
+        // Find the correct touch by identifier for multi-touch stability
+        touch = Array.from(e.touches).find(t=>t.identifier===scanEditor.dragTouchId) || e.touches[0];
+      } else {
+        touch = e;
+      }
       const canvas  = document.getElementById('scanCanvas');
       const cRect   = canvas.getBoundingClientRect();
-      const wrap    = document.getElementById('scanCanvasWrap');
-      const wRect   = wrap.getBoundingClientRect();
       let fx = (touch.clientX - cRect.left) / cRect.width;
       let fy = (touch.clientY - cRect.top)  / cRect.height;
       fx = Math.max(0, Math.min(1, fx));
@@ -1818,11 +1904,20 @@ function initCornerDrag() {
       updateCornerLines();
       drawEditorPreview();
     };
-    const onEnd = () => { scanEditor.dragCorner = null; };
+
+    const onEnd = (e) => {
+      if (scanEditor.dragCorner === key) {
+        scanEditor.dragCorner = null;
+        scanEditor.dragTouchId = null;
+      }
+    };
+
     el.addEventListener('touchstart', onStart, { passive: false });
     el.addEventListener('touchmove',  onMove,  { passive: false });
-    el.addEventListener('touchend',   onEnd);
+    el.addEventListener('touchend',   onEnd,   { passive: false });
+    el.addEventListener('touchcancel',onEnd,   { passive: false });
     el.addEventListener('mousedown',  onStart);
+    // Use window listeners so drag works even if pointer leaves the handle
     window.addEventListener('mousemove', e => { if(scanEditor.dragCorner===key) onMove(e); });
     window.addEventListener('mouseup',   onEnd);
   });
@@ -1834,10 +1929,10 @@ document.getElementById('resetCornersBtn').addEventListener('click', () => {
   // Re-run auto detect
   const oc = scanEditor.orientedCanvas;
   if (!oc) {
-    scanEditor.corners = {tl:{x:0.04,y:0.03},tr:{x:0.96,y:0.03},bl:{x:0.04,y:0.97},br:{x:0.96,y:0.97}};
+    scanEditor.corners = {tl:{x:0.03,y:0.03},tr:{x:0.97,y:0.03},bl:{x:0.03,y:0.97},br:{x:0.97,y:0.97}};
   } else {
     const sc = document.createElement('canvas');
-    const mx = 600, s = Math.min(mx/oc.width, mx/oc.height);
+    const mx = 800, s = Math.min(mx/oc.width, mx/oc.height, 1);
     sc.width  = Math.round(oc.width*s);
     sc.height = Math.round(oc.height*s);
     sc.getContext('2d').drawImage(oc,0,0,sc.width,sc.height);
@@ -1898,7 +1993,7 @@ document.getElementById('scanCancelBtn').addEventListener('click', () => {
   setPhotoLoading(null);
 });
 
-// ── Apply: OpenCV warpPerspective → enhancement → export ─────────────────
+// ── Apply: OpenCV warpPerspective → enhancement → auto-portrait → export ──
 document.getElementById('scanApplyBtn').addEventListener('click', async () => {
   const processing = document.getElementById('scanProcessing');
   processing.classList.remove('hidden');
@@ -1917,13 +2012,16 @@ document.getElementById('scanApplyBtn').addEventListener('click', async () => {
     const { tl, tr, bl, br } = scanEditor.corners;
     const W = srcC.width, H = srcC.height;
 
-    // Compute output size dari projected corners (A4-ratio friendly)
+    // Compute output size dari projected corners
     const widthTop  = Math.hypot((tr.x-tl.x)*W, (tr.y-tl.y)*H);
     const widthBot  = Math.hypot((br.x-bl.x)*W, (br.y-bl.y)*H);
     const heightL   = Math.hypot((bl.x-tl.x)*W, (bl.y-tl.y)*H);
     const heightR   = Math.hypot((br.x-tr.x)*W, (br.y-tr.y)*H);
-    const outW = Math.round(Math.max(widthTop, widthBot));
-    const outH = Math.round(Math.max(heightL,  heightR));
+    let outW = Math.round(Math.max(widthTop, widthBot));
+    let outH = Math.round(Math.max(heightL,  heightR));
+    // Ensure minimum output size
+    outW = Math.max(outW, 200);
+    outH = Math.max(outH, 200);
 
     let finalCanvas = null;
 
@@ -1941,18 +2039,30 @@ document.getElementById('scanApplyBtn').addEventListener('click', async () => {
       const minY=Math.round(Math.max(0,Math.min(...ys)));
       const maxY=Math.round(Math.min(H,Math.max(...ys)));
       finalCanvas = document.createElement('canvas');
-      finalCanvas.width  = maxX-minX;
-      finalCanvas.height = maxY-minY;
+      finalCanvas.width  = Math.max(1, maxX-minX);
+      finalCanvas.height = Math.max(1, maxY-minY);
       finalCanvas.getContext('2d').drawImage(srcC,minX,minY,finalCanvas.width,finalCanvas.height,0,0,finalCanvas.width,finalCanvas.height);
     }
 
-    // ③ Mode Scan: OpenCV adaptiveThreshold (jauh lebih baik dari simple threshold)
+    // ③ Auto-portrait: if result is landscape, rotate 90° CW to portrait
+    if (finalCanvas.width > finalCanvas.height) {
+      const rotC = document.createElement('canvas');
+      rotC.width  = finalCanvas.height;
+      rotC.height = finalCanvas.width;
+      const rCtx  = rotC.getContext('2d');
+      rCtx.translate(rotC.width/2, rotC.height/2);
+      rCtx.rotate(Math.PI/2);
+      rCtx.drawImage(finalCanvas, -finalCanvas.width/2, -finalCanvas.height/2);
+      finalCanvas = rotC;
+    }
+
+    // ④ Mode Scan: OpenCV adaptiveThreshold (jauh lebih baik dari simple threshold)
     if (scanEditor.mode === 'scan' && window._cvReady && typeof cv !== 'undefined') {
       const atCanvas = cvAdaptiveThreshold(finalCanvas);
       if (atCanvas) finalCanvas = atCanvas;
     }
 
-    // ④ Apply brightness/contrast/grayscale/enhance via pixel pipeline
+    // ⑤ Apply brightness/contrast/grayscale/enhance via pixel pipeline
     if (scanEditor.mode !== 'scan') {
       const ctx2   = finalCanvas.getContext('2d', { willReadFrequently:true });
       let imgData  = ctx2.getImageData(0,0,finalCanvas.width,finalCanvas.height);
@@ -1966,10 +2076,10 @@ document.getElementById('scanApplyBtn').addEventListener('click', async () => {
       ctx2.putImageData(imgData,0,0);
     }
 
-    // ⑤ Sharpening (unsharp mask)
+    // ⑥ Sharpening (unsharp mask)
     applySharpening(finalCanvas, scanEditor.sharpness);
 
-    // ⑥ Export JPEG 0.92
+    // ⑦ Export JPEG 0.92
     const uri = finalCanvas.toDataURL('image/jpeg', 0.92);
     scanEditor._results.push({ uri, name:`scan_${Date.now()}.jpg` });
 
