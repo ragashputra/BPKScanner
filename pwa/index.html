@@ -112,8 +112,6 @@ input::placeholder { color:var(--text-muted); font-weight:400; }
 .btn-accent { background:var(--accent); color:#fff; }
 .btn-photo { flex:1; height:50px; border-radius:13px; border:2px solid var(--accent); background:rgba(79,70,229,.09); color:var(--accent); font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:6px; transition:opacity .15s, transform .12s; }
 .btn-photo:active { transform:scale(.95); }
-.btn-photo.loading { opacity:.65; pointer-events:none; }
-.btn-photo.dimmed { opacity:.38; pointer-events:none; }
 .btn-primary { width:100%; height:52px; border-radius:16px; background:var(--accent); color:#fff; font-size:15px; font-weight:800; letter-spacing:.2px; display:flex; align-items:center; justify-content:center; gap:8px; border:none; cursor:pointer; box-shadow:0 4px 20px rgba(79,70,229,.35); transition:transform .12s; }
 .btn-primary:active { transform:scale(.97); }
 .btn-primary:disabled { opacity:.5; pointer-events:none; }
@@ -137,10 +135,7 @@ input::placeholder { color:var(--text-muted); font-weight:400; }
 .photo-scroll { display:flex; gap:10px; overflow-x:auto; padding:0 14px 14px; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
 .photo-scroll::-webkit-scrollbar { display:none; }
 .thumb-wrap { position:relative; width:115px; height:115px; flex-shrink:0; }
-.thumb-skeleton { position:absolute; inset:0; border-radius:12px; background:var(--surface-alt); overflow:hidden; display:flex; align-items:center; justify-content:center; }
-.shimmer { position:absolute; top:0; bottom:0; width:60px; background:rgba(255,255,255,.45); animation:shimmerSlide .9s linear infinite; }
-body.dark .shimmer { background:rgba(255,255,255,.08); }
-@keyframes shimmerSlide { from{left:-60px} to{left:175px} }
+.thumb-skeleton { position:absolute; inset:0; border-radius:12px; background:var(--surface-alt); overflow:hidden; }
 .thumb-img { position:absolute; inset:0; width:115px; height:115px; border-radius:12px; object-fit:cover; opacity:0; transition:opacity .26s ease-out; }
 .thumb-img.loaded { opacity:1; }
 .thumb-hint { position:absolute; bottom:0; left:0; right:0; height:32px; border-bottom-left-radius:12px; border-bottom-right-radius:12px; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .2s; }
@@ -214,7 +209,6 @@ svg { display:block; }
 #cameraVideo {
   position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
 }
-/* Canvas overlay for live document detection */
 #camDetectCanvas {
   position:absolute; inset:0; width:100%; height:100%;
   pointer-events:none; z-index:4;
@@ -231,15 +225,19 @@ svg { display:block; }
   background:rgba(0,0,0,.35); border:none; color:#fff;
   display:flex; align-items:center; justify-content:center;
 }
-.cam-top-actions {
-  display:flex; gap:10px; align-items:center;
-}
+.cam-top-actions { display:flex; gap:10px; align-items:center; }
 .cam-icon-btn {
   width:38px; height:38px; border-radius:19px;
   background:rgba(0,0,0,.35); border:none; color:#fff;
   display:flex; align-items:center; justify-content:center;
 }
-/* Bottom area: mode toggle + shutter row */
+.cam-detected-badge {
+  padding:7px 14px; border-radius:20px; font-size:12px; font-weight:700;
+  background:rgba(45,212,191,.15); border:1px solid rgba(45,212,191,.3);
+  color:#5EEAD4; display:none;
+}
+.cam-detected-badge.show { display:block; }
+
 .cam-bottom-area {
   position:absolute; bottom:0; left:0; right:0;
   display:flex; flex-direction:column; align-items:center;
@@ -247,11 +245,9 @@ svg { display:block; }
   background:linear-gradient(to top, rgba(0,0,0,.65) 0%, transparent 100%);
   z-index:10;
 }
-/* Mode toggle: "Satu Halaman" / "Beberapa Halaman" */
 .cam-page-toggle {
   display:flex; background:rgba(60,60,60,.7); border-radius:22px;
-  overflow:hidden; margin-bottom:18px;
-  border:1px solid rgba(255,255,255,.15);
+  overflow:hidden; margin-bottom:18px; border:1px solid rgba(255,255,255,.15);
 }
 .cam-page-btn {
   padding:9px 20px; font-size:13px; font-weight:700; color:rgba(255,255,255,.65);
@@ -260,7 +256,6 @@ svg { display:block; }
 .cam-page-btn.active {
   background:#fff; color:#111; border-radius:22px; margin:3px;
 }
-/* Shutter row */
 .cam-shutter-row {
   display:flex; align-items:center; justify-content:center;
   width:100%; padding:0 32px; gap:0; position:relative;
@@ -282,10 +277,7 @@ svg { display:block; }
   display:flex; align-items:center; justify-content:center;
   padding:0 12px; border:2px solid #fff;
 }
-.cam-done-label {
-  font-size:10px; font-weight:700; color:rgba(255,255,255,.8);
-}
-/* Shutter button — border changes color when doc detected */
+.cam-done-label { font-size:10px; font-weight:700; color:rgba(255,255,255,.8); }
 .cam-shutter {
   width:76px; height:76px; border-radius:38px;
   border:4px solid #fff; background:transparent;
@@ -301,50 +293,71 @@ svg { display:block; }
 .cam-shutter.capturing .cam-shutter-inner { background:rgba(255,255,255,.4); }
 .cam-flash-overlay {
   position:absolute; inset:0; background:#fff; opacity:0;
-  pointer-events:none; z-index:5;
-  transition:opacity .06s;
+  pointer-events:none; z-index:5; transition:opacity .06s;
 }
 .cam-flash-overlay.flash { opacity:.8; }
 
-/* ══ In-Camera Preview (after capture, before confirm) ══ */
-#camPreviewOverlay {
-  position:absolute; inset:0; z-index:20; background:#000;
-  display:none; flex-direction:column;
+/* ══ Crop Preview — BOTTOM SHEET (bukan fullscreen) ══ */
+#camCropPreview {
+  position:absolute; bottom:0; left:0; right:0; z-index:20;
+  transform:translateY(100%);
+  transition:transform .28s cubic-bezier(.34,1.2,.64,1);
 }
-#camPreviewOverlay.open { display:flex; }
-#camPreviewImg {
-  flex:1; width:100%; object-fit:contain; background:#000;
+#camCropPreview.open { transform:translateY(0); }
+.crop-sheet {
+  margin:0 12px 12px;
+  background:rgba(10,10,20,.88);
+  backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+  border-radius:20px;
+  border:1px solid rgba(255,255,255,.1);
+  padding:12px;
+  overflow:hidden;
 }
-.cam-preview-bottom {
-  flex-shrink:0; background:rgba(0,0,0,.85);
-  padding:14px 20px calc(var(--safe-bot) + 14px);
-  display:flex; flex-direction:column; gap:10px; align-items:center;
+.crop-drag-handle {
+  width:40px; height:4px; border-radius:2px;
+  background:rgba(255,255,255,.25);
+  margin:0 auto 12px;
 }
-.cam-preview-page-toggle {
-  display:flex; background:rgba(60,60,60,.8); border-radius:22px; overflow:hidden;
-  border:1px solid rgba(255,255,255,.15);
+.crop-inner {
+  display:flex; gap:12px; align-items:flex-start;
 }
-.cam-preview-page-btn {
-  padding:9px 20px; font-size:13px; font-weight:700; color:rgba(255,255,255,.6);
-  border:none; background:none; cursor:pointer;
+#cropPreviewImg {
+  width:116px; height:148px; object-fit:contain; border-radius:12px;
+  background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1);
+  flex-shrink:0;
 }
-.cam-preview-page-btn.active { background:#fff; color:#111; border-radius:22px; margin:3px; }
-.cam-preview-btn-row { display:flex; gap:10px; width:100%; }
-.cam-preview-retake {
-  flex:1; height:50px; border-radius:14px;
-  border:1.5px solid rgba(255,255,255,.3); background:transparent;
-  color:#fff; font-size:14px; font-weight:700; cursor:pointer;
-  display:flex; align-items:center; justify-content:center; gap:6px;
+.crop-actions {
+  flex:1; display:flex; flex-direction:column; gap:10px; padding-top:4px;
 }
-.cam-preview-ok {
-  flex:2; height:50px; border-radius:14px;
-  background:#2DD4BF; border:none;
-  color:#000; font-size:15px; font-weight:800; cursor:pointer;
+.crop-label {
+  font-size:12px; font-weight:600; color:rgba(255,255,255,.6);
+}
+.crop-ok {
+  height:44px; border-radius:14px; background:#2DD4BF; border:none;
+  color:#000; font-size:14px; font-weight:800; cursor:pointer;
   display:flex; align-items:center; justify-content:center; gap:6px;
   box-shadow:0 4px 16px rgba(45,212,191,.4);
+  transition:transform .1s;
 }
-.cam-preview-ok:active { transform:scale(.97); }
-.cam-preview-retake:active { opacity:.7; }
+.crop-ok:active { transform:scale(.95); }
+.crop-retake {
+  height:40px; border-radius:12px;
+  border:1.5px solid rgba(255,255,255,.25); background:transparent;
+  color:rgba(255,255,255,.9); font-size:13px; font-weight:700; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:6px;
+}
+.crop-retake:active { opacity:.7; }
+.crop-mode-toggle {
+  display:flex; background:rgba(60,60,60,.8); border-radius:20px;
+  overflow:hidden; border:1px solid rgba(255,255,255,.12);
+}
+.crop-mode-btn {
+  flex:1; padding:8px 12px; font-size:12px; font-weight:700;
+  color:rgba(255,255,255,.55); border:none; background:none; cursor:pointer;
+}
+.crop-mode-btn.active {
+  background:#fff; color:#111; border-radius:18px; margin:3px;
+}
 </style>
 </head>
 <body>
@@ -527,21 +540,17 @@ svg { display:block; }
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <div class="cam-top-actions">
+      <div class="cam-detected-badge" id="camDetectedBadge">Dokumen Terdeteksi</div>
       <button class="cam-icon-btn" id="camFlashBtn" title="Flash">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10 13,2"/></svg>
-      </button>
-      <button class="cam-icon-btn" id="camHDBtn" title="HD">
-        <span style="font-size:10px;font-weight:800;color:#fff;letter-spacing:-.5px">HD</span>
+        <svg id="flashIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><polygon points="13,2 3,14 12,14 11,22 21,10 12,10 13,2"/></svg>
       </button>
     </div>
   </div>
   <div class="cam-bottom-area">
-    <!-- Mode toggle: Satu Halaman / Beberapa Halaman -->
     <div class="cam-page-toggle">
       <button class="cam-page-btn active" id="camModeSingle">Satu Halaman</button>
       <button class="cam-page-btn" id="camModeMulti">Beberapa Halaman</button>
     </div>
-    <!-- Shutter row -->
     <div class="cam-shutter-row">
       <label class="cam-gallery-btn" for="camGalleryInput">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.8)" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>
@@ -549,14 +558,33 @@ svg { display:block; }
       <input type="file" id="camGalleryInput" accept="image/*" style="display:none" multiple/>
       <button class="cam-shutter" id="camShutter"><div class="cam-shutter-inner"></div></button>
       <div class="cam-done-area">
-        <div class="cam-counter hidden" id="camCounter">0</div>
-        <span class="cam-done-label hidden" id="camDoneLabel">foto</span>
+        <button class="cam-counter hidden" id="camCounter" onclick="camFinishMulti()">0</button>
+        <span class="cam-done-label hidden" id="camDoneLabel">Selesai</span>
+      </div>
+    </div>
+  </div>
+  <!-- Crop Preview Bottom Sheet -->
+  <div id="camCropPreview">
+    <div class="crop-sheet">
+      <div class="crop-drag-handle"></div>
+      <div class="crop-inner">
+        <img id="cropPreviewImg" src="" alt="preview"/>
+        <div class="crop-actions">
+          <div class="crop-label">Hasil scan dokumen</div>
+          <div class="crop-mode-toggle">
+            <button class="crop-mode-btn active" id="cpModeSingle">1 Hal.</button>
+            <button class="crop-mode-btn" id="cpModeMulti">Multi</button>
+          </div>
+          <button class="crop-ok" id="cropOk">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg>
+            Gunakan Foto
+          </button>
+          <button class="crop-retake" id="cropRetake">🔄 Ambil Ulang</button>
+        </div>
       </div>
     </div>
   </div>
 </div>
-
-<!-- In-camera preview overlay (inside cameraOverlay) is added via JS -->
 
 <div id="img-preview-overlay">
   <button id="img-preview-close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -641,27 +669,182 @@ document.getElementById('noBpkUrut').addEventListener('input',e=>{state.noBpkUru
 document.getElementById('noBpkManual').addEventListener('input',e=>{state.noBpkManual=e.target.value});
 
 // ═══ PHOTOS ═══
-function renderPhotos(){const s=document.getElementById('photoScroll'),c=document.getElementById('photoCount');c.textContent=state.photos.length;s.classList.toggle('hidden',!state.photos.length);s.innerHTML='';state.photos.forEach((p,i)=>{const w=document.createElement('div');w.className='thumb-wrap';w.innerHTML='<div class="thumb-skeleton"><div class="shimmer"></div></div><img class="thumb-img" src="'+p.uri+'" alt="foto '+(i+1)+'"/><div class="thumb-hint"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="thumb-badge">'+(i+1)+'</div><button class="thumb-remove" data-idx="'+i+'"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';const img=w.querySelector('.thumb-img');img.onload=()=>img.classList.add('loaded');if(img.complete)img.classList.add('loaded');img.addEventListener('click',()=>openPreview(p.uri));w.querySelector('.thumb-remove').addEventListener('click',e=>{e.stopPropagation();state.photos.splice(i,1);renderPhotos();showToast('Foto dihapus','info',1400)});s.appendChild(w)})}
+function renderPhotos(){const s=document.getElementById('photoScroll'),c=document.getElementById('photoCount');c.textContent=state.photos.length;s.classList.toggle('hidden',!state.photos.length);s.innerHTML='';state.photos.forEach((p,i)=>{const w=document.createElement('div');w.className='thumb-wrap';w.innerHTML='<div class="thumb-skeleton"></div><img class="thumb-img" src="'+p.uri+'" alt="foto '+(i+1)+'"/><div class="thumb-hint"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.9)" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div><div class="thumb-badge">'+(i+1)+'</div><button class="thumb-remove" data-idx="'+i+'"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';const img=w.querySelector('.thumb-img');img.onload=()=>img.classList.add('loaded');if(img.complete)img.classList.add('loaded');img.addEventListener('click',()=>openPreview(p.uri));w.querySelector('.thumb-remove').addEventListener('click',e=>{e.stopPropagation();state.photos.splice(i,1);renderPhotos();showToast('Foto dihapus','info',1400)});s.appendChild(w)})}
 
-// ═══ CAMERA — Fullscreen getUserMedia + Live Doc Detection ═══
+// ═══════════════════════════════════════════
+// ═══ IMPROVED EDGE DETECTION ALGORITHM  ════
+// ═══════════════════════════════════════════
+
+function edgeToGrayscale(data, total) {
+  const gray = new Float32Array(total);
+  for (let i = 0; i < total; i++)
+    gray[i] = 0.299*data[i*4] + 0.587*data[i*4+1] + 0.114*data[i*4+2];
+  return gray;
+}
+
+function edgeBlur3x3(src, w, h) {
+  const dst = new Float32Array(w*h);
+  for (let y=1;y<h-1;y++) for (let x=1;x<w-1;x++) {
+    const i=y*w+x;
+    dst[i]=(src[i-w-1]+src[i-w]+src[i-w+1]+src[i-1]+src[i]+src[i+1]+src[i+w-1]+src[i+w]+src[i+w+1])/9;
+  }
+  return dst;
+}
+
+function edgeSobel(src, w, h) {
+  const mag = new Float32Array(w*h);
+  for (let y=1;y<h-1;y++) for (let x=1;x<w-1;x++) {
+    const i=y*w+x;
+    const gx=-src[i-w-1]+src[i-w+1]-2*src[i-1]+2*src[i+1]-src[i+w-1]+src[i+w+1];
+    const gy=-src[i-w-1]-2*src[i-w]-src[i-w+1]+src[i+w-1]+2*src[i+w]+src[i+w+1];
+    mag[i]=Math.sqrt(gx*gx+gy*gy);
+  }
+  return mag;
+}
+
+function edgeThreshold(mag, total) {
+  let maxVal=0;
+  for (let i=0;i<total;i++) if(mag[i]>maxVal) maxVal=mag[i];
+  if(maxVal<5) return 9999;
+  const BINS=256, hist=new Uint32Array(BINS), scale=(BINS-1)/maxVal;
+  for (let i=0;i<total;i++) hist[Math.min(BINS-1,Math.round(mag[i]*scale))]++;
+  let cum=0, target=Math.round(total*0.68);
+  for (let i=0;i<BINS;i++){cum+=hist[i];if(cum>=target)return i/scale;}
+  return maxVal*0.5;
+}
+
+function edgeDilate(binary, w, h) {
+  const out=new Uint8Array(w*h);
+  for (let y=1;y<h-1;y++) for (let x=1;x<w-1;x++) {
+    const i=y*w+x;
+    out[i]=binary[i]||binary[i-1]||binary[i+1]||binary[i-w]||binary[i+w]?1:0;
+  }
+  return out;
+}
+
+function edgeFindEdge(proj, start, end, step, thresh) {
+  for (let i=start; step>0?i<end:i>end; i+=step) {
+    if(proj[i]<thresh) continue;
+    let ok=0;
+    for(let d=1;d<=5;d++){const n=i+d*Math.sign(step);if(n>=0&&n<proj.length&&proj[n]>thresh*0.35)ok++;}
+    if(ok>=1) return i;
+  }
+  return -1;
+}
+
+function detectDocumentInCanvas(canvas) {
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  const w=canvas.width,h=canvas.height,total=w*h;
+  const {data}=ctx.getImageData(0,0,w,h);
+  const gray=edgeToGrayscale(data,total);
+  const blurred=edgeBlur3x3(gray,w,h);
+  const mag=edgeSobel(blurred,w,h);
+  const thresh=edgeThreshold(mag,total);
+  const binary=new Uint8Array(total);
+  for(let i=0;i<total;i++) binary[i]=mag[i]>thresh?1:0;
+  const edges=edgeDilate(binary,w,h);
+  const mx=Math.max(2,Math.round(w*0.03)), my=Math.max(2,Math.round(h*0.03));
+  const hProj=new Float32Array(h), vProj=new Float32Array(w);
+  for(let y=my;y<h-my;y++){let cnt=0,span=0;for(let x=mx;x<w-mx;x++){cnt+=edges[y*w+x];span++;}hProj[y]=span>0?cnt/span:0;}
+  for(let x=mx;x<w-mx;x++){let cnt=0,span=0;for(let y=my;y<h-my;y++){cnt+=edges[y*w+x];span++;}vProj[x]=span>0?cnt/span:0;}
+  const et=0.055;
+  const top=edgeFindEdge(hProj,my,Math.round(h*0.5),1,et);
+  const bottom=edgeFindEdge(hProj,h-my-1,Math.round(h*0.5),-1,et);
+  const left=edgeFindEdge(vProj,mx,Math.round(w*0.5),1,et);
+  const right=edgeFindEdge(vProj,w-mx-1,Math.round(w*0.5),-1,et);
+  if(top<0||bottom<0||left<0||right<0) return null;
+  if((right-left)<w*0.12||(bottom-top)<h*0.12) return null;
+  return {tl:{x:left/w,y:top/h},tr:{x:right/w,y:top/h},bl:{x:left/w,y:bottom/h},br:{x:right/w,y:bottom/h}};
+}
+
+function smoothCorners(cur, prev, alpha=0.3) {
+  if(!prev) return cur;
+  if(!cur) return null;
+  const lp=(a,b)=>a+alpha*(b-a);
+  return {
+    tl:{x:lp(prev.tl.x,cur.tl.x),y:lp(prev.tl.y,cur.tl.y)},
+    tr:{x:lp(prev.tr.x,cur.tr.x),y:lp(prev.tr.y,cur.tr.y)},
+    bl:{x:lp(prev.bl.x,cur.bl.x),y:lp(prev.bl.y,cur.bl.y)},
+    br:{x:lp(prev.br.x,cur.br.x),y:lp(prev.br.y,cur.br.y)},
+  };
+}
+
+function drawDocOverlay(ctx, corners, W, H) {
+  const {tl,tr,bl,br}=corners;
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.4)';
+  ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='destination-out';
+  ctx.beginPath();ctx.moveTo(tl.x*W,tl.y*H);ctx.lineTo(tr.x*W,tr.y*H);ctx.lineTo(br.x*W,br.y*H);ctx.lineTo(bl.x*W,bl.y*H);ctx.closePath();ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle='#2DD4BF';ctx.lineWidth=2.5;ctx.shadowColor='#2DD4BF';ctx.shadowBlur=10;
+  ctx.beginPath();ctx.moveTo(tl.x*W,tl.y*H);ctx.lineTo(tr.x*W,tr.y*H);ctx.lineTo(br.x*W,br.y*H);ctx.lineTo(bl.x*W,bl.y*H);ctx.closePath();ctx.stroke();
+  const bLen=Math.min(W,H)*0.07;
+  ctx.lineWidth=4;ctx.shadowBlur=14;ctx.lineCap='round';
+  const pts=[[tl.x*W,tl.y*H,1,1],[tr.x*W,tr.y*H,-1,1],[bl.x*W,bl.y*H,1,-1],[br.x*W,br.y*H,-1,-1]];
+  pts.forEach(([cx,cy,sx,sy])=>{ctx.beginPath();ctx.moveTo(cx+sx*bLen,cy);ctx.lineTo(cx,cy);ctx.lineTo(cx,cy+sy*bLen);ctx.stroke();});
+  ctx.fillStyle='#2DD4BF';ctx.shadowBlur=8;
+  pts.forEach(([cx,cy])=>{ctx.beginPath();ctx.arc(cx,cy,5,0,Math.PI*2);ctx.fill();});
+  ctx.restore();
+}
+
+function drawGuideFrame(ctx, W, H) {
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.lineWidth=1.5;ctx.setLineDash([10,8]);
+  const m=0.1;ctx.strokeRect(W*m,H*m,W*(1-2*m),H*(1-2*m));
+  ctx.restore();
+  ctx.save();
+  ctx.fillStyle='rgba(255,255,255,0.55)';ctx.font='bold 13px -apple-system, sans-serif';ctx.textAlign='center';
+  ctx.fillText('Arahkan kamera ke dokumen',W/2,H*0.14);
+  ctx.restore();
+}
+
+function cropFromVideoEl(video, corners) {
+  const c=document.createElement('canvas');
+  c.width=video.videoWidth;c.height=video.videoHeight;
+  c.getContext('2d').drawImage(video,0,0);
+  const sw=c.width,sh=c.height;
+  const pts=corners||{tl:{x:.02,y:.02},tr:{x:.98,y:.02},bl:{x:.02,y:.98},br:{x:.98,y:.98}};
+  const xs=[pts.tl.x,pts.tr.x,pts.bl.x,pts.br.x].map(v=>v*sw);
+  const ys=[pts.tl.y,pts.tr.y,pts.bl.y,pts.br.y].map(v=>v*sh);
+  const minX=Math.max(0,Math.round(Math.min(...xs)));
+  const maxX=Math.min(sw,Math.round(Math.max(...xs)));
+  const minY=Math.max(0,Math.round(Math.min(...ys)));
+  const maxY=Math.min(sh,Math.round(Math.max(...ys)));
+  const cw=Math.max(1,maxX-minX),ch=Math.max(1,maxY-minY);
+  const out=document.createElement('canvas');out.width=cw;out.height=ch;
+  out.getContext('2d').drawImage(c,minX,minY,cw,ch,0,0,cw,ch);
+  return out.toDataURL('image/jpeg',0.92);
+}
+
+// ═══ CAMERA ═══
 let camStream=null, camMode='single', camPhotos=[], camActive=false;
-let camDetectRAF=null, camDetectedCorners=null;
+let camDetectRAF=null, smoothed=null, missCount=0, lastDetectTs=0;
+let flashOn=false, hasFlash=false;
+const sampleCanvas=document.createElement('canvas');
 
 async function openCamera(){
   const overlay=document.getElementById('cameraOverlay');
   const video=document.getElementById('cameraVideo');
-  camPhotos=[];
+  camPhotos=[];smoothed=null;missCount=0;
   updateCamMode();updateCamCounter();
+  closeCropPreview();
   try{
     camStream=await navigator.mediaDevices.getUserMedia({
       video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}},audio:false
     });
     video.srcObject=camStream;
-    await new Promise(r=>video.onloadedmetadata=r);
+    await new Promise(r=>{ video.onloadedmetadata=r; });
     video.play();
     overlay.classList.add('open');
     camActive=true;
-    startDocDetection();
+    // Check torch
+    const track=camStream.getVideoTracks()[0];
+    const caps=track.getCapabilities?.();
+    hasFlash=!!(caps&&caps.torch);
+    document.getElementById('camFlashBtn').style.display=hasFlash?'flex':'none';
+    startDetectionLoop();
   }catch(e){
     showToast('Kamera tidak tersedia, gunakan galeri','warning');
     document.getElementById('galleryInput').click();
@@ -670,147 +853,113 @@ async function openCamera(){
 
 function closeCamera(){
   camActive=false;
-  cancelAnimationFrame(camDetectRAF);
-  camDetectRAF=null;
-  camDetectedCorners=null;
+  if(camDetectRAF){cancelAnimationFrame(camDetectRAF);camDetectRAF=null;}
+  smoothed=null;missCount=0;
   document.getElementById('cameraOverlay').classList.remove('open');
-  if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null}
+  if(camStream){camStream.getTracks().forEach(t=>t.stop());camStream=null;}
   document.getElementById('cameraVideo').srcObject=null;
+  closeCropPreview();
+  flashOn=false;
 }
 
-// ── Live document edge detection (pure JS, no OpenCV) ────────────────────
-function startDocDetection(){
+function startDetectionLoop(){
   const video=document.getElementById('cameraVideo');
   const overlay=document.getElementById('cameraOverlay');
   const canvas=document.getElementById('camDetectCanvas');
   const ctx=canvas.getContext('2d',{willReadFrequently:true});
-  let lastDetect=0;
-  const DETECT_INTERVAL=300; // ms between detections (saves battery)
+  const INTERVAL=180;
 
   function loop(ts){
     if(!camActive)return;
     camDetectRAF=requestAnimationFrame(loop);
     if(!video.videoWidth)return;
 
-    // Size canvas to overlay
     const W=overlay.clientWidth, H=overlay.clientHeight;
-    if(canvas.width!==W||canvas.height!==H){canvas.width=W;canvas.height=H}
-
-    // Run detection every DETECT_INTERVAL ms
-    if(ts-lastDetect>DETECT_INTERVAL){
-      lastDetect=ts;
-      // Downscale video to small canvas for fast edge detection
-      const dw=320, dh=Math.round(320*video.videoHeight/video.videoWidth);
-      const small=document.createElement('canvas');
-      small.width=dw;small.height=dh;
-      small.getContext('2d').drawImage(video,0,0,dw,dh);
-      camDetectedCorners=detectDocEdges(small);
-    }
-
-    // Draw overlay
+    if(canvas.width!==W||canvas.height!==H){canvas.width=W;canvas.height=H;}
     ctx.clearRect(0,0,W,H);
-    if(camDetectedCorners){
-      drawDocOverlay(ctx,camDetectedCorners,W,H);
-      document.getElementById('camShutter').classList.add('detected');
-    }else{
-      document.getElementById('camShutter').classList.remove('detected');
+
+    if(ts-lastDetectTs>INTERVAL){
+      lastDetectTs=ts;
+      const sw=200, sh=Math.round(200*video.videoHeight/video.videoWidth);
+      sampleCanvas.width=sw;sampleCanvas.height=sh;
+      sampleCanvas.getContext('2d').drawImage(video,0,0,sw,sh);
+      const raw=detectDocumentInCanvas(sampleCanvas);
+      if(raw){
+        missCount=0;
+        smoothed=smoothCorners(raw,smoothed,0.3);
+      } else {
+        missCount++;
+        if(missCount>8) smoothed=null;
+      }
+      const det=missCount===0&&!!smoothed;
+      document.getElementById('camShutter').classList.toggle('detected',det);
+      document.getElementById('camDetectedBadge').classList.toggle('show',det);
     }
+
+    if(smoothed) drawDocOverlay(ctx,smoothed,W,H);
+    else drawGuideFrame(ctx,W,H);
   }
   camDetectRAF=requestAnimationFrame(loop);
 }
 
-// Simple pure-JS document detector — finds largest bright rectangular region
-function detectDocEdges(canvas){
-  const ctx=canvas.getContext('2d',{willReadFrequently:true});
-  const w=canvas.width,h=canvas.height;
-  const data=ctx.getImageData(0,0,w,h).data;
-
-  // Convert to grayscale + simple Sobel
-  const gray=new Uint8Array(w*h);
-  for(let i=0;i<w*h;i++) gray[i]=Math.round(0.299*data[i*4]+0.587*data[i*4+1]+0.114*data[i*4+2]);
-
-  // Sobel edge magnitude (sampled every 2px for speed)
-  const edge=new Uint8Array(w*h);
-  const step=2;
-  for(let y=step;y<h-step;y+=step){
-    for(let x=step;x<w-step;x+=step){
-      const gx=-gray[(y-step)*w+(x-step)]+gray[(y-step)*w+(x+step)]-2*gray[y*w+(x-step)]+2*gray[y*w+(x+step)]-gray[(y+step)*w+(x-step)]+gray[(y+step)*w+(x+step)];
-      const gy=-gray[(y-step)*w+(x-step)]-2*gray[(y-step)*w+x]-gray[(y-step)*w+(x+step)]+gray[(y+step)*w+(x-step)]+2*gray[(y+step)*w+x]+gray[(y+step)*w+(x+step)];
-      const m=Math.min(255,Math.sqrt(gx*gx+gy*gy));
-      edge[y*w+x]=m;
-    }
-  }
-
-  // Threshold
-  const threshold=45;
-
-  // Scan for document bounding box: find outermost strong edge rows/cols
-  // with at least 30% of pixels above threshold
-  const minFrac=0.25;
-  let top=-1,bot=-1,left=-1,right=-1;
-  // top edge
-  for(let y=Math.round(h*.05);y<h*.5;y+=step){
-    let cnt=0,total=0;
-    for(let x=Math.round(w*.1);x<w*.9;x+=step){cnt+=(edge[y*w+x]>threshold?1:0);total++}
-    if(total&&cnt/total>minFrac){top=y;break}
-  }
-  // bottom
-  for(let y=h-Math.round(h*.05);y>h*.5;y-=step){
-    let cnt=0,total=0;
-    for(let x=Math.round(w*.1);x<w*.9;x+=step){cnt+=(edge[y*w+x]>threshold?1:0);total++}
-    if(total&&cnt/total>minFrac){bot=y;break}
-  }
-  // left
-  for(let x=Math.round(w*.05);x<w*.5;x+=step){
-    let cnt=0,total=0;
-    for(let y=Math.round(h*.1);y<h*.9;y+=step){cnt+=(edge[y*w+x]>threshold?1:0);total++}
-    if(total&&cnt/total>minFrac){left=x;break}
-  }
-  // right
-  for(let x=w-Math.round(w*.05);x>w*.5;x-=step){
-    let cnt=0,total=0;
-    for(let y=Math.round(h*.1);y<h*.9;y+=step){cnt+=(edge[y*w+x]>threshold?1:0);total++}
-    if(total&&cnt/total>minFrac){right=x;break}
-  }
-
-  if(top<0||bot<0||left<0||right<0) return null;
-  // Sanity: must cover at least 20% of frame
-  if((right-left)<w*.2||(bot-top)<h*.2) return null;
-
-  return{
-    tl:{x:left/w,y:top/h},tr:{x:right/w,y:top/h},
-    bl:{x:left/w,y:bot/h},br:{x:right/w,y:bot/h}
-  };
+function capturePhoto(){
+  const video=document.getElementById('cameraVideo');
+  if(!video.videoWidth)return;
+  const flash=document.getElementById('camFlash');
+  flash.classList.add('flash');setTimeout(()=>flash.classList.remove('flash'),120);
+  const shutter=document.getElementById('camShutter');
+  shutter.classList.add('capturing');setTimeout(()=>shutter.classList.remove('capturing'),200);
+  const corners=smoothed||null;
+  const croppedUri=cropFromVideoEl(video,corners);
+  openCropPreview(croppedUri);
 }
 
-function drawDocOverlay(ctx,corners,W,H){
-  // Smooth animate corners by interpolating toward detected
-  const{tl,tr,bl,br}=corners;
-  // Semi-transparent dark mask outside doc
-  ctx.save();
-  ctx.fillStyle='rgba(0,0,0,0.45)';
-  ctx.fillRect(0,0,W,H);
-  ctx.globalCompositeOperation='destination-out';
-  ctx.beginPath();
-  ctx.moveTo(tl.x*W,tl.y*H);ctx.lineTo(tr.x*W,tr.y*H);
-  ctx.lineTo(br.x*W,br.y*H);ctx.lineTo(bl.x*W,bl.y*H);
-  ctx.closePath();ctx.fill();
-  ctx.restore();
-  // Cyan border
-  ctx.save();
-  ctx.strokeStyle='#2DD4BF';ctx.lineWidth=3;
-  ctx.shadowColor='#2DD4BF';ctx.shadowBlur=8;
-  ctx.beginPath();
-  ctx.moveTo(tl.x*W,tl.y*H);ctx.lineTo(tr.x*W,tr.y*H);
-  ctx.lineTo(br.x*W,br.y*H);ctx.lineTo(bl.x*W,bl.y*H);
-  ctx.closePath();ctx.stroke();
-  // Corner brackets (thicker lines at corners)
-  const bLen=Math.min(W,H)*0.08;
-  ctx.lineWidth=4;ctx.shadowBlur=12;
-  [[tl.x*W,tl.y*H,1,1],[tr.x*W,tr.y*H,-1,1],[bl.x*W,bl.y*H,1,-1],[br.x*W,br.y*H,-1,-1]].forEach(([cx,cy,sx,sy])=>{
-    ctx.beginPath();ctx.moveTo(cx+sx*bLen,cy);ctx.lineTo(cx,cy);ctx.lineTo(cx,cy+sy*bLen);ctx.stroke();
-  });
-  ctx.restore();
+// ═══ CROP PREVIEW (Bottom Sheet) ═══
+let cropPreviewUri='';
+
+function openCropPreview(uri){
+  cropPreviewUri=uri;
+  document.getElementById('cropPreviewImg').src=uri;
+  syncCropModeButtons();
+  document.getElementById('camCropPreview').classList.add('open');
+}
+
+function closeCropPreview(){
+  document.getElementById('camCropPreview').classList.remove('open');
+  document.getElementById('cropPreviewImg').src='';
+  cropPreviewUri='';
+}
+
+function syncCropModeButtons(){
+  document.getElementById('cpModeSingle').classList.toggle('active',camMode==='single');
+  document.getElementById('cpModeMulti').classList.toggle('active',camMode==='multi');
+  document.getElementById('camModeSingle').classList.toggle('active',camMode==='single');
+  document.getElementById('camModeMulti').classList.toggle('active',camMode==='multi');
+}
+
+document.getElementById('cpModeSingle').addEventListener('click',()=>{camMode='single';syncCropModeButtons();updateCamCounter();});
+document.getElementById('cpModeMulti').addEventListener('click',()=>{camMode='multi';syncCropModeButtons();updateCamCounter();});
+
+document.getElementById('cropOk').addEventListener('click',()=>{
+  if(!cropPreviewUri)return;
+  state.photos.push({uri:cropPreviewUri,name:'scan_'+Date.now()+'.jpg'});
+  renderPhotos();
+  closeCropPreview();
+  if(camMode==='single'){
+    closeCamera();
+    showToast('Foto ditambahkan','success',1200);
+  } else {
+    camPhotos.push(cropPreviewUri);
+    updateCamCounter();
+    showToast('Foto '+(camPhotos.length+state.photos.length)+' ditambahkan','success',900);
+  }
+});
+
+document.getElementById('cropRetake').addEventListener('click',closeCropPreview);
+
+function camFinishMulti(){
+  closeCamera();
+  showToast(camPhotos.length+' foto ditambahkan','success',1600);
 }
 
 function updateCamMode(){
@@ -821,202 +970,56 @@ function updateCamMode(){
 function updateCamCounter(){
   const counter=document.getElementById('camCounter');
   const lbl=document.getElementById('camDoneLabel');
-  if(camMode==='multi'&&camPhotos.length>0){
-    counter.classList.remove('hidden');counter.textContent=camPhotos.length;
+  const n=state.photos.length;
+  if(camMode==='multi'&&n>0){
+    counter.classList.remove('hidden');counter.textContent=n;
     lbl.classList.remove('hidden');
-  }else{counter.classList.add('hidden');lbl.classList.add('hidden')}
+  }else{counter.classList.add('hidden');lbl.classList.add('hidden');}
 }
 
-function capturePhoto(){
-  const video=document.getElementById('cameraVideo');
-  if(!video.videoWidth)return;
-  // Flash
-  const flash=document.getElementById('camFlash');
-  flash.classList.add('flash');
-  setTimeout(()=>flash.classList.remove('flash'),120);
-  document.getElementById('camShutter').classList.add('capturing');
-  setTimeout(()=>document.getElementById('camShutter').classList.remove('capturing'),200);
-  // Capture full-res
-  const c=document.createElement('canvas');
-  c.width=video.videoWidth;c.height=video.videoHeight;
-  c.getContext('2d').drawImage(video,0,0);
-  const uri=c.toDataURL('image/jpeg',0.92);
-  const corners=camDetectedCorners||null;
-  // Show in-camera preview (camera keeps running underneath)
-  openPreviewPanel(uri,corners);
-}
+// Flash toggle
+document.getElementById('camFlashBtn').addEventListener('click',async()=>{
+  if(!camStream)return;
+  const track=camStream.getVideoTracks()[0];
+  flashOn=!flashOn;
+  try{await track.applyConstraints({advanced:[{torch:flashOn}]});}catch(e){}
+  const icon=document.getElementById('flashIcon');
+  if(flashOn){
+    icon.setAttribute('stroke','#FBBF24');
+    document.getElementById('camFlashBtn').style.background='rgba(251,191,36,0.25)';
+  } else {
+    icon.setAttribute('stroke','#fff');
+    document.getElementById('camFlashBtn').style.background='rgba(0,0,0,0.35)';
+  }
+});
 
 document.getElementById('openCameraBtn').addEventListener('click',openCamera);
 document.getElementById('camCloseBtn').addEventListener('click',closeCamera);
 document.getElementById('camShutter').addEventListener('click',capturePhoto);
-document.getElementById('camModeSingle').addEventListener('click',()=>{camMode='single';updateCamMode();updateCamCounter()});
-document.getElementById('camModeMulti').addEventListener('click',()=>{camMode='multi';updateCamMode();updateCamCounter()});
+document.getElementById('camModeSingle').addEventListener('click',()=>{camMode='single';updateCamMode();updateCamCounter();syncCropModeButtons();});
+document.getElementById('camModeMulti').addEventListener('click',()=>{camMode='multi';updateCamMode();updateCamCounter();syncCropModeButtons();});
 
 // Gallery from camera overlay
 document.getElementById('camGalleryInput').addEventListener('change',e=>{
   if(!e.target.files.length)return;
-  loadGalleryPreview(e.target.files);
+  loadGalleryFiles(Array.from(e.target.files));
   e.target.value='';
 });
-// Gallery from home
 document.getElementById('galleryInput').addEventListener('change',e=>{
   if(!e.target.files.length)return;
-  loadGalleryPreview(e.target.files);
+  loadGalleryFiles(Array.from(e.target.files));
   e.target.value='';
 });
 
-// ═══ IN-CAMERA PREVIEW (after capture) ═══
-// Build the preview panel inside cameraOverlay
-(function buildPreviewPanel(){
-  const panel=document.createElement('div');
-  panel.id='camPreviewOverlay';
-  panel.innerHTML=`
-    <img id="camPreviewImg" src="" alt="preview"/>
-    <div class="cam-preview-bottom">
-      <div class="cam-preview-page-toggle">
-        <button class="cam-preview-page-btn active" id="pvModeSingle">Satu Halaman</button>
-        <button class="cam-preview-page-btn" id="pvModeMulti">Beberapa Halaman</button>
-      </div>
-      <div class="cam-preview-btn-row">
-        <button class="cam-preview-retake" id="pvRetake">🔄 Ambil Ulang</button>
-        <button class="cam-preview-ok" id="pvOk">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg>
-          OK
-        </button>
-      </div>
-    </div>
-  `;
-  document.getElementById('cameraOverlay').appendChild(panel);
-})();
-
-let previewCapturedUri='', previewCapturedCorners=null;
-let cropQueue=[], cropQueueIdx=0;
-
-function clamp(v){return Math.max(0,Math.min(255,Math.round(v)))}
-
-// Apply detected crop (bounding box from corners) and return data URI
-function applyCropAndGet(uri, corners){
-  return new Promise(resolve=>{
-    const img=new Image();
-    img.onload=()=>{
-      const W=img.naturalWidth,H=img.naturalHeight;
-      const c=corners||{tl:{x:.02,y:.02},tr:{x:.98,y:.02},bl:{x:.02,y:.98},br:{x:.98,y:.98}};
-      const xs=[c.tl.x,c.tr.x,c.bl.x,c.br.x].map(v=>v*W);
-      const ys=[c.tl.y,c.tr.y,c.bl.y,c.br.y].map(v=>v*H);
-      const minX=Math.round(Math.max(0,Math.min(...xs)));
-      const maxX=Math.round(Math.min(W,Math.max(...xs)));
-      const minY=Math.round(Math.max(0,Math.min(...ys)));
-      const maxY=Math.round(Math.min(H,Math.max(...ys)));
-      const cw=Math.max(1,maxX-minX),ch=Math.max(1,maxY-minY);
-      const fc=document.createElement('canvas');fc.width=cw;fc.height=ch;
-      fc.getContext('2d').drawImage(img,minX,minY,cw,ch,0,0,cw,ch);
-      resolve(fc.toDataURL('image/jpeg',0.92));
-    };
-    img.src=uri;
+function loadGalleryFiles(files){
+  files.forEach(file=>{
+    const r=new FileReader();
+    r.onload=ev=>{state.photos.push({uri:ev.target.result,name:file.name});renderPhotos();}
+    r.readAsDataURL(file);
   });
+  if(camStream) closeCamera();
+  setTimeout(()=>showToast(files.length+' foto ditambahkan','success',1600),100);
 }
-
-function openPreviewPanel(uri, corners){
-  previewCapturedUri=uri;
-  previewCapturedCorners=corners;
-  // Show cropped preview
-  applyCropAndGet(uri,corners).then(croppedUri=>{
-    document.getElementById('camPreviewImg').src=croppedUri;
-    // Sync mode buttons
-    document.getElementById('pvModeSingle').classList.toggle('active',camMode==='single');
-    document.getElementById('pvModeMulti').classList.toggle('active',camMode==='multi');
-    document.getElementById('camPreviewOverlay').classList.add('open');
-  });
-}
-
-function closePreviewPanel(){
-  document.getElementById('camPreviewOverlay').classList.remove('open');
-  document.getElementById('camPreviewImg').src='';
-}
-
-// Mode sync from preview panel
-document.getElementById('pvModeSingle').addEventListener('click',()=>{
-  camMode='single';
-  document.getElementById('pvModeSingle').classList.add('active');
-  document.getElementById('pvModeMulti').classList.remove('active');
-  document.getElementById('camModeSingle').classList.add('active');
-  document.getElementById('camModeMulti').classList.remove('active');
-});
-document.getElementById('pvModeMulti').addEventListener('click',()=>{
-  camMode='multi';
-  document.getElementById('pvModeMulti').classList.add('active');
-  document.getElementById('pvModeSingle').classList.remove('active');
-  document.getElementById('camModeMulti').classList.add('active');
-  document.getElementById('camModeSingle').classList.remove('active');
-});
-
-// Retake
-document.getElementById('pvRetake').addEventListener('click',()=>{
-  closePreviewPanel();
-  // Camera is still running underneath — just close preview to go back to live
-});
-
-// OK — save photo
-document.getElementById('pvOk').addEventListener('click',async()=>{
-  const croppedUri=document.getElementById('camPreviewImg').src;
-  state.photos.push({uri:croppedUri,name:'scan_'+Date.now()+'.jpg'});
-  renderPhotos();
-  closePreviewPanel();
-  if(camMode==='single'){
-    closeCamera();
-    showToast('Foto ditambahkan','success',1200);
-  }else{
-    // Multi: stay in camera for next shot
-    updateCamCounter();
-    showToast('Foto '+state.photos.length+' ditambahkan','success',1000);
-  }
-});
-
-// Gallery files — show preview for each one
-function loadGalleryPreview(files){
-  cropQueue=[...files];cropQueueIdx=0;
-  showGalleryItemPreview();
-}
-function showGalleryItemPreview(){
-  if(cropQueueIdx>=cropQueue.length)return;
-  const r=new FileReader();
-  r.onload=e=>{
-    // Show fullscreen preview (reuse cam preview but outside camera overlay)
-    previewCapturedUri=e.target.result;
-    previewCapturedCorners=null;
-    applyCropAndGet(e.target.result,null).then(uri=>{
-      document.getElementById('camPreviewImg').src=uri;
-      document.getElementById('pvModeSingle').classList.toggle('active',camMode==='single');
-      document.getElementById('pvModeMulti').classList.toggle('active',camMode==='multi');
-      // For gallery, show camera overlay just to host the preview
-      document.getElementById('cameraOverlay').classList.add('open');
-      document.getElementById('camPreviewOverlay').classList.add('open');
-      // Override OK for gallery queue
-      const okBtn=document.getElementById('pvOk');
-      okBtn.onclick=async()=>{
-        state.photos.push({uri:document.getElementById('camPreviewImg').src,name:'scan_'+Date.now()+'.jpg'});
-        renderPhotos();
-        closePreviewPanel();
-        cropQueueIdx++;
-        if(cropQueueIdx<cropQueue.length){
-          showGalleryItemPreview();
-        }else{
-          closeCamera();
-          showToast(cropQueue.length+' foto ditambahkan','success',1600);
-        }
-      };
-      document.getElementById('pvRetake').onclick=()=>{
-        closePreviewPanel();cropQueueIdx++;
-        if(cropQueueIdx<cropQueue.length) showGalleryItemPreview();
-        else closeCamera();
-      };
-    });
-  };
-  r.readAsDataURL(cropQueue[cropQueueIdx]);
-}
-
-// Resize handler (no-op now, kept for safety)
-window.addEventListener('resize',()=>{});
 
 // ═══ IMAGE PREVIEW ═══
 function openPreview(uri){document.getElementById('previewImg').src=uri;document.getElementById('img-preview-overlay').classList.add('open')}
