@@ -306,80 +306,45 @@ svg { display:block; }
 }
 .cam-flash-overlay.flash { opacity:.8; }
 
-/* ══ Crop Editor ══ */
-#cropOverlay {
-  position:fixed; inset:0; z-index:3500; background:rgba(0,0,0,.95);
+/* ══ In-Camera Preview (after capture, before confirm) ══ */
+#camPreviewOverlay {
+  position:absolute; inset:0; z-index:20; background:#000;
   display:none; flex-direction:column;
 }
-#cropOverlay.open { display:flex; }
-.crop-header {
-  display:flex; align-items:center; justify-content:space-between;
-  padding:calc(var(--safe-top) + 8px) 16px 8px;
-  flex-shrink:0;
+#camPreviewOverlay.open { display:flex; }
+#camPreviewImg {
+  flex:1; width:100%; object-fit:contain; background:#000;
 }
-.crop-title { font-size:15px; font-weight:800; color:#fff; }
-.crop-sub { font-size:11px; color:rgba(255,255,255,.5); margin-top:1px; }
-.crop-close-btn {
-  width:36px; height:36px; border-radius:10px;
-  background:rgba(255,255,255,.12); border:none;
-  display:flex; align-items:center; justify-content:center;
+.cam-preview-bottom {
+  flex-shrink:0; background:rgba(0,0,0,.85);
+  padding:14px 20px calc(var(--safe-bot) + 14px);
+  display:flex; flex-direction:column; gap:10px; align-items:center;
 }
-.crop-canvas-wrap {
-  flex:1; position:relative; overflow:hidden;
-  display:flex; align-items:center; justify-content:center;
-  margin:0 12px;
+.cam-preview-page-toggle {
+  display:flex; background:rgba(60,60,60,.8); border-radius:22px; overflow:hidden;
+  border:1px solid rgba(255,255,255,.15);
 }
-#cropCanvas { max-width:100%; max-height:100%; border-radius:8px; display:block; touch-action:none; }
-.crop-handle {
-  position:absolute; width:40px; height:40px; border-radius:20px;
-  background:rgba(79,70,229,.9); border:3px solid #fff;
-  transform:translate(-50%,-50%); cursor:grab; touch-action:none;
-  box-shadow:0 2px 12px rgba(0,0,0,.6); z-index:10;
+.cam-preview-page-btn {
+  padding:9px 20px; font-size:13px; font-weight:700; color:rgba(255,255,255,.6);
+  border:none; background:none; cursor:pointer;
 }
-.crop-handle::after { content:''; position:absolute; inset:-14px; border-radius:50%; }
-.crop-handle:active { transform:translate(-50%,-50%) scale(1.2); }
-.crop-edge-line {
-  position:absolute; background:rgba(79,70,229,.6); z-index:5; pointer-events:none;
+.cam-preview-page-btn.active { background:#fff; color:#111; border-radius:22px; margin:3px; }
+.cam-preview-btn-row { display:flex; gap:10px; width:100%; }
+.cam-preview-retake {
+  flex:1; height:50px; border-radius:14px;
+  border:1.5px solid rgba(255,255,255,.3); background:transparent;
+  color:#fff; font-size:14px; font-weight:700; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:6px;
 }
-/* Enhancement controls */
-.crop-controls {
-  flex-shrink:0; padding:10px 14px;
-  display:flex; gap:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+.cam-preview-ok {
+  flex:2; height:50px; border-radius:14px;
+  background:#2DD4BF; border:none;
+  color:#000; font-size:15px; font-weight:800; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  box-shadow:0 4px 16px rgba(45,212,191,.4);
 }
-.crop-controls::-webkit-scrollbar { display:none; }
-.crop-ctrl-btn {
-  flex-shrink:0; height:38px; padding:0 14px; border-radius:10px;
-  border:1.5px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08);
-  color:rgba(255,255,255,.8); font-size:12px; font-weight:700;
-  display:flex; align-items:center; gap:5px; cursor:pointer; white-space:nowrap;
-}
-.crop-ctrl-btn:active { background:rgba(255,255,255,.2); }
-.crop-ctrl-btn.active { background:rgba(79,70,229,.7); border-color:rgba(79,70,229,.9); color:#fff; }
-.crop-sliders { flex-shrink:0; padding:6px 14px 8px; display:flex; flex-direction:column; gap:8px; }
-.crop-slider-row { display:flex; align-items:center; gap:10px; }
-.crop-slider-label { font-size:11px; font-weight:700; color:rgba(255,255,255,.6); width:72px; flex-shrink:0; }
-.crop-slider-val { font-size:11px; font-weight:700; color:rgba(255,255,255,.8); width:30px; text-align:right; flex-shrink:0; }
-input[type=range].crop-range {
-  flex:1; height:4px; accent-color:var(--accent); background:rgba(255,255,255,.2);
-  border-radius:2px; outline:none; cursor:pointer; -webkit-appearance:none;
-}
-input[type=range].crop-range::-webkit-slider-thumb {
-  -webkit-appearance:none; width:20px; height:20px; border-radius:10px;
-  background:var(--accent); border:2px solid #fff; box-shadow:0 1px 6px rgba(0,0,0,.4);
-}
-.crop-apply-wrap { flex-shrink:0; padding:8px 14px calc(var(--safe-bot) + 8px); }
-.crop-apply-btn {
-  width:100%; height:50px; border-radius:14px; background:var(--accent); color:#fff;
-  font-size:15px; font-weight:800; display:flex; align-items:center; justify-content:center; gap:8px;
-  border:none; cursor:pointer; box-shadow:0 4px 18px rgba(79,70,229,.45);
-}
-.crop-apply-btn:active { transform:scale(.97); }
-.crop-retake-btn {
-  width:100%; height:44px; border-radius:12px; background:transparent;
-  border:1.5px solid rgba(255,255,255,.25); color:rgba(255,255,255,.7);
-  font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; gap:6px;
-  cursor:pointer; margin-top:8px;
-}
+.cam-preview-ok:active { transform:scale(.97); }
+.cam-preview-retake:active { opacity:.7; }
 </style>
 </head>
 <body>
@@ -591,34 +556,7 @@ input[type=range].crop-range::-webkit-slider-thumb {
   </div>
 </div>
 
-<!-- Crop Editor -->
-<div id="cropOverlay">
-  <div class="crop-header">
-    <div><div class="crop-title">Atur Crop</div><div class="crop-sub" id="cropSubTitle">Geser titik sudut untuk memotong</div></div>
-    <button class="crop-close-btn" id="cropCloseBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-  </div>
-  <div class="crop-canvas-wrap" id="cropCanvasWrap">
-    <canvas id="cropCanvas"></canvas>
-    <div class="crop-handle" id="ch-tl" data-corner="tl"></div>
-    <div class="crop-handle" id="ch-tr" data-corner="tr"></div>
-    <div class="crop-handle" id="ch-bl" data-corner="bl"></div>
-    <div class="crop-handle" id="ch-br" data-corner="br"></div>
-  </div>
-  <div class="crop-controls">
-    <button class="crop-ctrl-btn active" data-mode="color">🌈 Warna Asli</button>
-    <button class="crop-ctrl-btn" data-mode="grayscale">🔲 Hitam Putih</button>
-    <button class="crop-ctrl-btn" data-mode="scan">📄 Mode Scan</button>
-    <button class="crop-ctrl-btn" data-mode="enhance">⚡ Auto Enhance</button>
-  </div>
-  <div class="crop-sliders">
-    <div class="crop-slider-row"><span class="crop-slider-label">Kecerahan</span><input type="range" class="crop-range" id="cropBright" min="-80" max="80" value="0"/><span class="crop-slider-val" id="cropBrightVal">0</span></div>
-    <div class="crop-slider-row"><span class="crop-slider-label">Kontras</span><input type="range" class="crop-range" id="cropContrast" min="-80" max="120" value="0"/><span class="crop-slider-val" id="cropContrastVal">0</span></div>
-  </div>
-  <div class="crop-apply-wrap">
-    <button class="crop-apply-btn" id="cropApplyBtn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22,4 12,14.01 9,11.01"/></svg> Tambahkan Foto</button>
-    <button class="crop-retake-btn" id="cropRetakeBtn">🔄 Ambil Ulang</button>
-  </div>
-</div>
+<!-- In-camera preview overlay (inside cameraOverlay) is added via JS -->
 
 <div id="img-preview-overlay">
   <button id="img-preview-close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -903,32 +841,9 @@ function capturePhoto(){
   c.width=video.videoWidth;c.height=video.videoHeight;
   c.getContext('2d').drawImage(video,0,0);
   const uri=c.toDataURL('image/jpeg',0.92);
-  // Pass detected corners (scaled to image) into crop editor
-  let initCorners=null;
-  if(camDetectedCorners){
-    // corners are fractions relative to video display — use directly
-    initCorners={
-      tl:{x:camDetectedCorners.tl.x,y:camDetectedCorners.tl.y},
-      tr:{x:camDetectedCorners.tr.x,y:camDetectedCorners.tr.y},
-      bl:{x:camDetectedCorners.bl.x,y:camDetectedCorners.bl.y},
-      br:{x:camDetectedCorners.br.x,y:camDetectedCorners.br.y}
-    };
-  }
-  if(camMode==='single'){
-    closeCamera();
-    openCropEditor(uri,initCorners);
-  }else{
-    camPhotos.push(uri);
-    updateCamCounter();
-    // In multi mode, keep camera open and just add to list; crop later
-    // Show brief confirmation
-    const cnt=camPhotos.length;
-    if(cnt>=1){
-      // After capture, go to crop then reopen camera
-      closeCamera();
-      openCropEditor(uri,initCorners);
-    }
-  }
+  const corners=camDetectedCorners||null;
+  // Show in-camera preview (camera keeps running underneath)
+  openPreviewPanel(uri,corners);
 }
 
 document.getElementById('openCameraBtn').addEventListener('click',openCamera);
@@ -940,183 +855,168 @@ document.getElementById('camModeMulti').addEventListener('click',()=>{camMode='m
 // Gallery from camera overlay
 document.getElementById('camGalleryInput').addEventListener('change',e=>{
   if(!e.target.files.length)return;
-  closeCamera();
-  handleGalleryFiles(e.target.files);
+  loadGalleryPreview(e.target.files);
   e.target.value='';
 });
-
 // Gallery from home
 document.getElementById('galleryInput').addEventListener('change',e=>{
   if(!e.target.files.length)return;
-  handleGalleryFiles(e.target.files);
+  loadGalleryPreview(e.target.files);
   e.target.value='';
 });
 
-function handleGalleryFiles(files){
-  cropQueue=[...files].map(f=>({file:f}));
-  cropQueueIdx=0;
-  loadCropFromFile(cropQueue[0].file);
-}
+// ═══ IN-CAMERA PREVIEW (after capture) ═══
+// Build the preview panel inside cameraOverlay
+(function buildPreviewPanel(){
+  const panel=document.createElement('div');
+  panel.id='camPreviewOverlay';
+  panel.innerHTML=`
+    <img id="camPreviewImg" src="" alt="preview"/>
+    <div class="cam-preview-bottom">
+      <div class="cam-preview-page-toggle">
+        <button class="cam-preview-page-btn active" id="pvModeSingle">Satu Halaman</button>
+        <button class="cam-preview-page-btn" id="pvModeMulti">Beberapa Halaman</button>
+      </div>
+      <div class="cam-preview-btn-row">
+        <button class="cam-preview-retake" id="pvRetake">🔄 Ambil Ulang</button>
+        <button class="cam-preview-ok" id="pvOk">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20,6 9,17 4,12"/></svg>
+          OK
+        </button>
+      </div>
+    </div>
+  `;
+  document.getElementById('cameraOverlay').appendChild(panel);
+})();
 
-// ═══ CROP EDITOR ═══
-let cropState={
-  sourceUri:'', corners:{tl:{x:.05,y:.05},tr:{x:.95,y:.05},bl:{x:.05,y:.95},br:{x:.95,y:.95}},
-  mode:'color', brightness:0, contrast:0,
-  sourceImg:null, dragCorner:null, dragTouchId:null,
-};
-let cropQueue=[], cropQueueIdx=0, cropResults=[];
-let cropRetakeMode=false;
-
-function openCropEditor(uri, initCorners){
-  cropState.sourceUri=uri;
-  // Use auto-detected corners if available, otherwise safe defaults
-  cropState.corners=initCorners||{tl:{x:.05,y:.05},tr:{x:.95,y:.05},bl:{x:.05,y:.95},br:{x:.95,y:.95}};
-  cropState.mode='color';cropState.brightness=0;cropState.contrast=0;
-  document.getElementById('cropBright').value=0;document.getElementById('cropBrightVal').textContent='0';
-  document.getElementById('cropContrast').value=0;document.getElementById('cropContrastVal').textContent='0';
-  document.querySelectorAll('.crop-ctrl-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelector('.crop-ctrl-btn[data-mode="color"]').classList.add('active');
-  const img=new Image();
-  img.onload=()=>{cropState.sourceImg=img;drawCrop();document.getElementById('cropOverlay').classList.add('open')};
-  img.src=uri;
-  const total=cropQueue.length;
-  document.getElementById('cropSubTitle').textContent=total>1?'Foto '+(cropQueueIdx+1)+' dari '+total+' — geser titik sudut':'Geser titik sudut untuk memotong';
-}
-
-function loadCropFromFile(file){
-  const r=new FileReader();
-  r.onload=e=>openCropEditor(e.target.result);
-  r.readAsDataURL(file);
-}
-
-function drawCrop(){
-  const canvas=document.getElementById('cropCanvas');
-  const wrap=document.getElementById('cropCanvasWrap');
-  const ctx=canvas.getContext('2d');
-  const img=cropState.sourceImg;if(!img)return;
-  const wr=wrap.getBoundingClientRect();
-  const wW=wr.width||window.innerWidth-24;
-  const wH=wr.height||window.innerHeight*.5;
-  const sc=Math.min(wW/img.naturalWidth,wH/img.naturalHeight,1);
-  canvas.width=Math.round(img.naturalWidth*sc);
-  canvas.height=Math.round(img.naturalHeight*sc);
-  const cw=canvas.width,ch=canvas.height;
-  const{tl,tr,bl,br}=cropState.corners;
-  // Draw image
-  ctx.drawImage(img,0,0,cw,ch);
-  // Dim outside
-  ctx.save();ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,cw,ch);
-  ctx.globalCompositeOperation='destination-out';
-  ctx.beginPath();ctx.moveTo(tl.x*cw,tl.y*ch);ctx.lineTo(tr.x*cw,tr.y*ch);ctx.lineTo(br.x*cw,br.y*ch);ctx.lineTo(bl.x*cw,bl.y*ch);ctx.closePath();ctx.fill();ctx.restore();
-  ctx.save();ctx.globalCompositeOperation='destination-over';ctx.drawImage(img,0,0,cw,ch);ctx.restore();
-  // Border
-  ctx.save();ctx.strokeStyle='#4F46E5';ctx.lineWidth=2;ctx.setLineDash([6,4]);
-  ctx.beginPath();ctx.moveTo(tl.x*cw,tl.y*ch);ctx.lineTo(tr.x*cw,tr.y*ch);ctx.lineTo(br.x*cw,br.y*ch);ctx.lineTo(bl.x*cw,bl.y*ch);ctx.closePath();ctx.stroke();
-  ctx.setLineDash([]);
-  [[tl.x*cw,tl.y*ch],[tr.x*cw,tr.y*ch],[br.x*cw,br.y*ch],[bl.x*cw,bl.y*ch]].forEach(([x,y])=>{ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fillStyle='#4F46E5';ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke()});
-  ctx.restore();
-  updateCropHandles();
-}
-
-function updateCropHandles(){
-  const wrap=document.getElementById('cropCanvasWrap');
-  const canvas=document.getElementById('cropCanvas');
-  const wR=wrap.getBoundingClientRect();
-  const cR=canvas.getBoundingClientRect();
-  const ox=cR.left-wR.left, oy=cR.top-wR.top, cw=cR.width, ch=cR.height;
-  ['tl','tr','bl','br'].forEach(k=>{
-    const el=document.getElementById('ch-'+k);
-    el.style.left=(ox+cropState.corners[k].x*cw)+'px';
-    el.style.top=(oy+cropState.corners[k].y*ch)+'px';
-  });
-}
-
-// Corner drag
-['tl','tr','bl','br'].forEach(key=>{
-  const el=document.getElementById('ch-'+key);
-  const onStart=e=>{e.preventDefault();e.stopPropagation();cropState.dragCorner=key;cropState.dragTouchId=e.touches?e.touches[0].identifier:null};
-  const onMove=e=>{if(cropState.dragCorner!==key)return;e.preventDefault();let t=e.touches?Array.from(e.touches).find(x=>x.identifier===cropState.dragTouchId)||e.touches[0]:e;const c=document.getElementById('cropCanvas').getBoundingClientRect();let fx=(t.clientX-c.left)/c.width,fy=(t.clientY-c.top)/c.height;fx=Math.max(0,Math.min(1,fx));fy=Math.max(0,Math.min(1,fy));cropState.corners[key]={x:fx,y:fy};drawCrop()};
-  const onEnd=()=>{if(cropState.dragCorner===key){cropState.dragCorner=null;cropState.dragTouchId=null}};
-  el.addEventListener('touchstart',onStart,{passive:false});el.addEventListener('touchmove',onMove,{passive:false});el.addEventListener('touchend',onEnd);el.addEventListener('touchcancel',onEnd);
-  el.addEventListener('mousedown',onStart);window.addEventListener('mousemove',e=>{if(cropState.dragCorner===key)onMove(e)});window.addEventListener('mouseup',onEnd);
-});
-
-// Mode buttons
-document.querySelectorAll('.crop-ctrl-btn').forEach(b=>{
-  b.addEventListener('click',()=>{cropState.mode=b.dataset.mode;document.querySelectorAll('.crop-ctrl-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active')});
-});
-document.getElementById('cropBright').addEventListener('input',e=>{cropState.brightness=+e.target.value;document.getElementById('cropBrightVal').textContent=e.target.value});
-document.getElementById('cropContrast').addEventListener('input',e=>{cropState.contrast=+e.target.value;document.getElementById('cropContrastVal').textContent=e.target.value});
+let previewCapturedUri='', previewCapturedCorners=null;
+let cropQueue=[], cropQueueIdx=0;
 
 function clamp(v){return Math.max(0,Math.min(255,Math.round(v)))}
 
-function applyCropEnhancements(canvas){
-  const ctx=canvas.getContext('2d',{willReadFrequently:true});
-  const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);
-  const d=imgData.data;
-  const mode=cropState.mode, bright=cropState.brightness, contrast=cropState.contrast;
-  const factor=(259*(contrast+255))/(255*(259-contrast));
-  for(let i=0;i<d.length;i+=4){
-    if(d[i+3]===0)continue;
-    d[i]=clamp(factor*(d[i]-128)+128+bright);
-    d[i+1]=clamp(factor*(d[i+1]-128)+128+bright);
-    d[i+2]=clamp(factor*(d[i+2]-128)+128+bright);
-  }
-  if(mode==='grayscale'||mode==='enhance'){for(let i=0;i<d.length;i+=4){if(d[i+3]===0)continue;const l=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];d[i]=d[i+1]=d[i+2]=l}}
-  if(mode==='enhance'){for(let i=0;i<d.length;i+=4){if(d[i+3]===0)continue;let v=d[i];v=v<85?v*0.6:v<170?51+(v-85)*1.15:Math.min(255,148.75+(v-170)*1.65);d[i]=d[i+1]=d[i+2]=clamp(v)}}
-  if(mode==='scan'){for(let i=0;i<d.length;i+=4){if(d[i+3]===0)continue;const l=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];const v=l>140?255:0;d[i]=d[i+1]=d[i+2]=v}}
-  ctx.putImageData(imgData,0,0);
+// Apply detected crop (bounding box from corners) and return data URI
+function applyCropAndGet(uri, corners){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const W=img.naturalWidth,H=img.naturalHeight;
+      const c=corners||{tl:{x:.02,y:.02},tr:{x:.98,y:.02},bl:{x:.02,y:.98},br:{x:.98,y:.98}};
+      const xs=[c.tl.x,c.tr.x,c.bl.x,c.br.x].map(v=>v*W);
+      const ys=[c.tl.y,c.tr.y,c.bl.y,c.br.y].map(v=>v*H);
+      const minX=Math.round(Math.max(0,Math.min(...xs)));
+      const maxX=Math.round(Math.min(W,Math.max(...xs)));
+      const minY=Math.round(Math.max(0,Math.min(...ys)));
+      const maxY=Math.round(Math.min(H,Math.max(...ys)));
+      const cw=Math.max(1,maxX-minX),ch=Math.max(1,maxY-minY);
+      const fc=document.createElement('canvas');fc.width=cw;fc.height=ch;
+      fc.getContext('2d').drawImage(img,minX,minY,cw,ch,0,0,cw,ch);
+      resolve(fc.toDataURL('image/jpeg',0.92));
+    };
+    img.src=uri;
+  });
 }
 
-// Apply crop
-document.getElementById('cropApplyBtn').addEventListener('click',()=>{
-  const img=cropState.sourceImg;if(!img)return;
-  const{tl,tr,bl,br}=cropState.corners;
-  const W=img.naturalWidth,H=img.naturalHeight;
-  const xs=[tl.x,tr.x,bl.x,br.x].map(v=>v*W);
-  const ys=[tl.y,tr.y,bl.y,br.y].map(v=>v*H);
-  const minX=Math.round(Math.max(0,Math.min(...xs)));
-  const maxX=Math.round(Math.min(W,Math.max(...xs)));
-  const minY=Math.round(Math.max(0,Math.min(...ys)));
-  const maxY=Math.round(Math.min(H,Math.max(...ys)));
-  const cw=Math.max(1,maxX-minX),ch=Math.max(1,maxY-minY);
-  const fc=document.createElement('canvas');fc.width=cw;fc.height=ch;
-  fc.getContext('2d').drawImage(img,minX,minY,cw,ch,0,0,cw,ch);
-  applyCropEnhancements(fc);
-  const uri=fc.toDataURL('image/jpeg',0.92);
-  state.photos.push({uri,name:'scan_'+Date.now()+'.jpg'});
-  renderPhotos();
-  document.getElementById('cropOverlay').classList.remove('open');
-  cropQueueIdx++;
-  if(cropQueueIdx<cropQueue.length){
-    setTimeout(()=>loadCropFromFile(cropQueue[cropQueueIdx].file),200);
-  }else if(camMode==='multi'&&!cropRetakeMode){
-    // Multi mode: reopen camera for next shot
-    showToast('Foto '+state.photos.length+' ditambahkan — ambil lagi atau tutup kamera','success',2000);
-    setTimeout(()=>openCamera(),300);
-  }else{
-    showToast('Foto ditambahkan','success',1200);
-  }
-  cropRetakeMode=false;
+function openPreviewPanel(uri, corners){
+  previewCapturedUri=uri;
+  previewCapturedCorners=corners;
+  // Show cropped preview
+  applyCropAndGet(uri,corners).then(croppedUri=>{
+    document.getElementById('camPreviewImg').src=croppedUri;
+    // Sync mode buttons
+    document.getElementById('pvModeSingle').classList.toggle('active',camMode==='single');
+    document.getElementById('pvModeMulti').classList.toggle('active',camMode==='multi');
+    document.getElementById('camPreviewOverlay').classList.add('open');
+  });
+}
+
+function closePreviewPanel(){
+  document.getElementById('camPreviewOverlay').classList.remove('open');
+  document.getElementById('camPreviewImg').src='';
+}
+
+// Mode sync from preview panel
+document.getElementById('pvModeSingle').addEventListener('click',()=>{
+  camMode='single';
+  document.getElementById('pvModeSingle').classList.add('active');
+  document.getElementById('pvModeMulti').classList.remove('active');
+  document.getElementById('camModeSingle').classList.add('active');
+  document.getElementById('camModeMulti').classList.remove('active');
+});
+document.getElementById('pvModeMulti').addEventListener('click',()=>{
+  camMode='multi';
+  document.getElementById('pvModeMulti').classList.add('active');
+  document.getElementById('pvModeSingle').classList.remove('active');
+  document.getElementById('camModeMulti').classList.add('active');
+  document.getElementById('camModeSingle').classList.remove('active');
 });
 
 // Retake
-document.getElementById('cropRetakeBtn').addEventListener('click',()=>{
-  document.getElementById('cropOverlay').classList.remove('open');
-  cropRetakeMode=true;
-  if(camMode==='multi'||camMode==='single'){
-    openCamera();
+document.getElementById('pvRetake').addEventListener('click',()=>{
+  closePreviewPanel();
+  // Camera is still running underneath — just close preview to go back to live
+});
+
+// OK — save photo
+document.getElementById('pvOk').addEventListener('click',async()=>{
+  const croppedUri=document.getElementById('camPreviewImg').src;
+  state.photos.push({uri:croppedUri,name:'scan_'+Date.now()+'.jpg'});
+  renderPhotos();
+  closePreviewPanel();
+  if(camMode==='single'){
+    closeCamera();
+    showToast('Foto ditambahkan','success',1200);
+  }else{
+    // Multi: stay in camera for next shot
+    updateCamCounter();
+    showToast('Foto '+state.photos.length+' ditambahkan','success',1000);
   }
 });
 
-// Close crop
-document.getElementById('cropCloseBtn').addEventListener('click',()=>{
-  document.getElementById('cropOverlay').classList.remove('open');
-  cropQueue=[];cropQueueIdx=0;
-});
+// Gallery files — show preview for each one
+function loadGalleryPreview(files){
+  cropQueue=[...files];cropQueueIdx=0;
+  showGalleryItemPreview();
+}
+function showGalleryItemPreview(){
+  if(cropQueueIdx>=cropQueue.length)return;
+  const r=new FileReader();
+  r.onload=e=>{
+    // Show fullscreen preview (reuse cam preview but outside camera overlay)
+    previewCapturedUri=e.target.result;
+    previewCapturedCorners=null;
+    applyCropAndGet(e.target.result,null).then(uri=>{
+      document.getElementById('camPreviewImg').src=uri;
+      document.getElementById('pvModeSingle').classList.toggle('active',camMode==='single');
+      document.getElementById('pvModeMulti').classList.toggle('active',camMode==='multi');
+      // For gallery, show camera overlay just to host the preview
+      document.getElementById('cameraOverlay').classList.add('open');
+      document.getElementById('camPreviewOverlay').classList.add('open');
+      // Override OK for gallery queue
+      const okBtn=document.getElementById('pvOk');
+      okBtn.onclick=async()=>{
+        state.photos.push({uri:document.getElementById('camPreviewImg').src,name:'scan_'+Date.now()+'.jpg'});
+        renderPhotos();
+        closePreviewPanel();
+        cropQueueIdx++;
+        if(cropQueueIdx<cropQueue.length){
+          showGalleryItemPreview();
+        }else{
+          closeCamera();
+          showToast(cropQueue.length+' foto ditambahkan','success',1600);
+        }
+      };
+      document.getElementById('pvRetake').onclick=()=>{
+        closePreviewPanel();cropQueueIdx++;
+        if(cropQueueIdx<cropQueue.length) showGalleryItemPreview();
+        else closeCamera();
+      };
+    });
+  };
+  r.readAsDataURL(cropQueue[cropQueueIdx]);
+}
 
-// Resize handler
-window.addEventListener('resize',()=>{if(cropState.sourceImg&&document.getElementById('cropOverlay').classList.contains('open'))drawCrop()});
+// Resize handler (no-op now, kept for safety)
+window.addEventListener('resize',()=>{});
 
 // ═══ IMAGE PREVIEW ═══
 function openPreview(uri){document.getElementById('previewImg').src=uri;document.getElementById('img-preview-overlay').classList.add('open')}
