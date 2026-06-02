@@ -464,6 +464,122 @@ body.dark .shimmer { background:rgba(255,255,255,.08); }
 .flex1 { flex:1; }
 svg { display:block; }
 .hidden { display:none!important; }
+
+/* ── Scan Editor Modal ──────────────────────────────────────────────────── */
+#scanEditorOverlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,.92);
+  display: none; flex-direction: column;
+  padding: env(safe-area-inset-top,44px) 0 env(safe-area-inset-bottom,20px);
+}
+#scanEditorOverlay.open { display: flex; }
+.scan-editor-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; flex-shrink: 0;
+}
+.scan-editor-title { font-size: 15px; font-weight: 800; color: #fff; }
+.scan-editor-sub   { font-size: 11px; color: rgba(255,255,255,.5); margin-top: 1px; }
+.scan-close-btn {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: rgba(255,255,255,.12); border: none;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: background .15s;
+}
+.scan-close-btn:active { background: rgba(255,255,255,.22); }
+
+/* Canvas wrapper */
+.scan-canvas-wrap {
+  flex: 1; position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 12px;
+}
+#scanCanvas {
+  max-width: 100%; max-height: 100%;
+  border-radius: 10px;
+  display: block;
+  touch-action: none;
+}
+/* Corner handles for perspective */
+.corner-handle {
+  position: absolute; width: 28px; height: 28px;
+  border-radius: 14px;
+  background: rgba(79,70,229,.9);
+  border: 3px solid #fff;
+  transform: translate(-50%, -50%);
+  cursor: grab; touch-action: none;
+  box-shadow: 0 2px 10px rgba(0,0,0,.5);
+  transition: transform .1s;
+  z-index: 10;
+}
+.corner-handle:active { transform: translate(-50%,-50%) scale(1.2); }
+.corner-line-svg {
+  position: absolute; inset: 0; pointer-events: none; z-index: 5;
+}
+
+/* Controls */
+.scan-controls {
+  flex-shrink: 0; padding: 10px 14px;
+  display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.scan-controls::-webkit-scrollbar { display: none; }
+.scan-ctrl-btn {
+  flex-shrink: 0; height: 38px; padding: 0 14px; border-radius: 10px;
+  border: 1.5px solid rgba(255,255,255,.2);
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.8); font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; gap: 5px;
+  cursor: pointer; transition: background .15s, border-color .15s;
+  white-space: nowrap;
+}
+.scan-ctrl-btn:active { background: rgba(255,255,255,.2); }
+.scan-ctrl-btn.active {
+  background: rgba(79,70,229,.7); border-color: rgba(79,70,229,.9); color: #fff;
+}
+.scan-ctrl-icon { font-size: 14px; }
+
+/* Sliders */
+.scan-sliders {
+  flex-shrink: 0; padding: 6px 14px 8px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.scan-slider-row { display: flex; align-items: center; gap: 10px; }
+.scan-slider-label { font-size: 11px; font-weight: 700; color: rgba(255,255,255,.6); width: 72px; flex-shrink: 0; }
+.scan-slider-val   { font-size: 11px; font-weight: 700; color: rgba(255,255,255,.8); width: 30px; text-align: right; flex-shrink: 0; }
+input[type=range].scan-range {
+  flex: 1; height: 4px; accent-color: var(--accent);
+  background: rgba(255,255,255,.2); border-radius: 2px;
+  outline: none; cursor: pointer;
+  -webkit-appearance: none;
+}
+input[type=range].scan-range::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px;
+  border-radius: 10px; background: var(--accent);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 6px rgba(0,0,0,.4);
+}
+
+/* Apply button */
+.scan-apply-wrap { flex-shrink: 0; padding: 8px 14px; }
+.scan-apply-btn {
+  width: 100%; height: 50px; border-radius: 14px;
+  background: var(--accent); color: #fff;
+  font-size: 15px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  border: none; cursor: pointer;
+  box-shadow: 0 4px 18px rgba(79,70,229,.45);
+  transition: transform .12s;
+}
+.scan-apply-btn:active { transform: scale(.97); }
+
+/* Processing overlay */
+.scan-processing {
+  position: absolute; inset: 0; background: rgba(0,0,0,.6);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; border-radius: 10px;
+}
+.scan-processing-text { font-size: 13px; font-weight: 700; color: #fff; }
+.scan-processing.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -768,6 +884,82 @@ svg { display:block; }
 </div>
 
 <!-- TOAST CONTAINER -->
+<!-- ══ SCAN EDITOR MODAL ════════════════════════════════════════════════ -->
+<div id="scanEditorOverlay">
+  <div class="scan-editor-header">
+    <div>
+      <div class="scan-editor-title">✨ Enhance Dokumen</div>
+      <div class="scan-editor-sub">Sesuaikan sudut & kualitas scan</div>
+    </div>
+    <button class="scan-close-btn" id="scanCancelBtn">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+
+  <!-- Canvas area -->
+  <div class="scan-canvas-wrap" id="scanCanvasWrap">
+    <canvas id="scanCanvas"></canvas>
+    <!-- Perspective corner handles -->
+    <div class="corner-handle" id="ch-tl" data-corner="tl"></div>
+    <div class="corner-handle" id="ch-tr" data-corner="tr"></div>
+    <div class="corner-handle" id="ch-bl" data-corner="bl"></div>
+    <div class="corner-handle" id="ch-br" data-corner="br"></div>
+    <!-- Lines overlay -->
+    <svg class="corner-line-svg" id="cornerLineSvg" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <polygon id="cornerPoly" points="0,0 100,0 100,100 0,100"
+        fill="rgba(79,70,229,0.12)" stroke="rgba(79,70,229,0.9)" stroke-width="0.6"/>
+    </svg>
+    <!-- Processing spinner -->
+    <div class="scan-processing hidden" id="scanProcessing">
+      <div class="spinner" style="width:32px;height:32px;border-width:3px;border-color:rgba(255,255,255,.3);border-top-color:#fff"></div>
+      <div class="scan-processing-text">Memproses...</div>
+    </div>
+  </div>
+
+  <!-- Mode buttons -->
+  <div class="scan-controls">
+    <button class="scan-ctrl-btn active" id="modeColor" data-mode="color">
+      <span class="scan-ctrl-icon">🌈</span> Warna Asli
+    </button>
+    <button class="scan-ctrl-btn" id="modeGrayscale" data-mode="grayscale">
+      <span class="scan-ctrl-icon">🔲</span> Hitam Putih
+    </button>
+    <button class="scan-ctrl-btn" id="modeScan" data-mode="scan">
+      <span class="scan-ctrl-icon">📄</span> Mode Scan
+    </button>
+    <button class="scan-ctrl-btn" id="modeEnhance" data-mode="enhance">
+      <span class="scan-ctrl-icon">⚡</span> Auto Enhance
+    </button>
+  </div>
+
+  <!-- Sliders -->
+  <div class="scan-sliders">
+    <div class="scan-slider-row">
+      <span class="scan-slider-label">Kecerahan</span>
+      <input type="range" class="scan-range" id="sliderBright" min="-80" max="80" value="0"/>
+      <span class="scan-slider-val" id="valBright">0</span>
+    </div>
+    <div class="scan-slider-row">
+      <span class="scan-slider-label">Kontras</span>
+      <input type="range" class="scan-range" id="sliderContrast" min="-80" max="120" value="0"/>
+      <span class="scan-slider-val" id="valContrast">0</span>
+    </div>
+    <div class="scan-slider-row">
+      <span class="scan-slider-label">Ketajaman</span>
+      <input type="range" class="scan-range" id="sliderSharp" min="0" max="10" value="3"/>
+      <span class="scan-slider-val" id="valSharp">3</span>
+    </div>
+  </div>
+
+  <!-- Apply -->
+  <div class="scan-apply-wrap">
+    <button class="scan-apply-btn" id="scanApplyBtn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22,4 12,14.01 9,11.01"/></svg>
+      Tambahkan Foto
+    </button>
+  </div>
+</div>
+
 <div id="toast-container"></div>
 
 <!-- MODALS -->
@@ -1089,24 +1281,385 @@ function setPhotoLoading(source) {
   galTxt.textContent = source==='gallery'? 'Memproses...' : 'Galeri';
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// SCAN EDITOR — CamScanner-like document enhancement
+// ════════════════════════════════════════════════════════════════════════════
+const scanEditor = {
+  queue: [],          // files waiting to be edited
+  currentIdx: 0,
+  sourceImg: null,    // original HTMLImageElement
+  mode: 'color',      // color | grayscale | scan | enhance
+  brightness: 0,
+  contrast: 0,
+  sharpness: 3,
+  corners: null,      // { tl, tr, bl, br } in canvas-relative fraction (0-1)
+  dragCorner: null,
+  canvasRect: null,
+};
+
+// ── Open editor for next image in queue ─────────────────────────────────
+function openScanEditor(files, source) {
+  scanEditor.queue = [...files];
+  scanEditor.currentIdx = 0;
+  scanEditor._source = source;
+  scanEditor._results = [];
+  loadNextInEditor();
+}
+
+function loadNextInEditor() {
+  if (scanEditor.currentIdx >= scanEditor.queue.length) {
+    // All done — push results to state
+    state.photos.push(...scanEditor._results);
+    renderPhotos();
+    showToast(`${scanEditor._results.length} foto ditambahkan`, 'success', 1600);
+    setPhotoLoading(null);
+    return;
+  }
+  const file = scanEditor.queue[scanEditor.currentIdx];
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      scanEditor.sourceImg = img;
+      resetEditorState();
+      drawEditorPreview();
+      document.getElementById('scanEditorOverlay').classList.add('open');
+      // Update sub text for multi-photo
+      const total = scanEditor.queue.length;
+      const cur   = scanEditor.currentIdx + 1;
+      document.querySelector('.scan-editor-sub').textContent =
+        total > 1 ? `Foto ${cur} dari ${total} — sesuaikan sudut & kualitas` : 'Sesuaikan sudut & kualitas scan';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetEditorState() {
+  scanEditor.mode = 'color';
+  scanEditor.brightness = 0;
+  scanEditor.contrast   = 0;
+  scanEditor.sharpness  = 3;
+  // Reset corners to full image
+  scanEditor.corners = { tl:{x:0,y:0}, tr:{x:1,y:0}, bl:{x:0,y:1}, br:{x:1,y:1} };
+  // Reset UI controls
+  document.getElementById('sliderBright').value = 0;
+  document.getElementById('sliderContrast').value = 0;
+  document.getElementById('sliderSharp').value = 3;
+  document.getElementById('valBright').textContent = 0;
+  document.getElementById('valContrast').textContent = 0;
+  document.getElementById('valSharp').textContent = 3;
+  ['modeColor','modeGrayscale','modeScan','modeEnhance'].forEach(id => {
+    document.getElementById(id).classList.remove('active');
+  });
+  document.getElementById('modeColor').classList.add('active');
+}
+
+// ── Draw preview on canvas with current settings ─────────────────────────
+function drawEditorPreview() {
+  const overlay  = document.getElementById('scanEditorOverlay');
+  const wrap     = document.getElementById('scanCanvasWrap');
+  const canvas   = document.getElementById('scanCanvas');
+  const ctx      = canvas.getContext('2d', { willReadFrequently: true });
+  const img      = scanEditor.sourceImg;
+
+  // Fit canvas to wrap
+  const wrapW = wrap.clientWidth  || window.innerWidth  - 24;
+  const wrapH = wrap.clientHeight || window.innerHeight * 0.45;
+  const scale = Math.min(wrapW / img.naturalWidth, wrapH / img.naturalHeight);
+  canvas.width  = Math.round(img.naturalWidth  * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+  scanEditor.canvasRect = { w: canvas.width, h: canvas.height };
+
+  // Draw source image
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // Apply perspective warp (crop to corners)
+  const { tl, tr, bl, br } = scanEditor.corners;
+  const cw = canvas.width, ch = canvas.height;
+  const pts = {
+    tl: { x: tl.x*cw, y: tl.y*ch },
+    tr: { x: tr.x*cw, y: tr.y*ch },
+    bl: { x: bl.x*cw, y: bl.y*ch },
+    br: { x: br.x*cw, y: br.y*ch },
+  };
+
+  // Clip to polygon
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.beginPath();
+  ctx.moveTo(pts.tl.x, pts.tl.y);
+  ctx.lineTo(pts.tr.x, pts.tr.y);
+  ctx.lineTo(pts.br.x, pts.br.y);
+  ctx.lineTo(pts.bl.x, pts.bl.y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Get pixel data for enhancement
+  let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  imgData = applyEnhancements(imgData);
+  ctx.putImageData(imgData, 0, 0);
+
+  // Update corner handles position
+  updateCornerHandles();
+  updateCornerLines();
+}
+
+// ── Image processing pipeline ────────────────────────────────────────────
+function applyEnhancements(imgData) {
+  const d    = imgData.data;
+  const mode = scanEditor.mode;
+  const bright   = scanEditor.brightness;
+  const contrast = scanEditor.contrast;
+  const sharp    = scanEditor.sharpness;
+
+  // 1. Brightness & Contrast
+  const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i+3] === 0) continue; // skip transparent
+    d[i]   = clamp(factor * (d[i]   - 128) + 128 + bright);
+    d[i+1] = clamp(factor * (d[i+1] - 128) + 128 + bright);
+    d[i+2] = clamp(factor * (d[i+2] - 128) + 128 + bright);
+  }
+
+  // 2. Mode: grayscale / scan / enhance
+  if (mode === 'grayscale' || mode === 'scan' || mode === 'enhance') {
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i+3] === 0) continue;
+      const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+      d[i] = d[i+1] = d[i+2] = lum;
+    }
+  }
+
+  if (mode === 'scan') {
+    // Adaptive threshold — high contrast B&W like scanned doc
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i+3] === 0) continue;
+      const v = d[i] > 148 ? 255 : 0;
+      d[i] = d[i+1] = d[i+2] = v;
+    }
+  }
+
+  if (mode === 'enhance') {
+    // Boost shadows + highlights for document feel
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i+3] === 0) continue;
+      let v = d[i];
+      // S-curve for document contrast
+      v = v < 100 ? v * 0.75 : v > 180 ? Math.min(255, v * 1.1 + 12) : v;
+      d[i] = d[i+1] = d[i+2] = clamp(v);
+    }
+  }
+
+  return imgData;
+}
+
+// ── Sharpening (unsharp mask via convolution) ────────────────────────────
+function applySharpening(canvas, amount) {
+  if (amount <= 0) return;
+  const ctx  = canvas.getContext('2d', { willReadFrequently: true });
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  const w = canvas.width, h = canvas.height;
+  const tmp = new Uint8ClampedArray(d);
+
+  // Laplacian-based sharpen kernel scaled by amount
+  const str = amount * 0.15; // 0→0, 10→1.5
+  // kernel: center = 1 + 4*str, neighbors = -str
+  for (let y = 1; y < h-1; y++) {
+    for (let x = 1; x < w-1; x++) {
+      const i = (y*w + x)*4;
+      for (let c = 0; c < 3; c++) {
+        const ci = i + c;
+        const neighbors = tmp[ci-4] + tmp[ci+4] + tmp[ci-w*4] + tmp[ci+w*4];
+        d[ci] = clamp(tmp[ci] * (1 + 4*str) - neighbors*str);
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+}
+
+function clamp(v) { return Math.max(0, Math.min(255, Math.round(v))); }
+
+// ── Corner handle positioning ────────────────────────────────────────────
+function updateCornerHandles() {
+  const wrap   = document.getElementById('scanCanvasWrap');
+  const canvas = document.getElementById('scanCanvas');
+  const wRect  = wrap.getBoundingClientRect();
+  const cRect  = canvas.getBoundingClientRect();
+  // Canvas offset within wrap
+  const ox = cRect.left - wRect.left;
+  const oy = cRect.top  - wRect.top;
+  const cw = cRect.width, ch = cRect.height;
+
+  const { tl, tr, bl, br } = scanEditor.corners;
+  const corners = { tl, tr, bl, br };
+  ['tl','tr','bl','br'].forEach(key => {
+    const el = document.getElementById(`ch-${key}`);
+    el.style.left = `${ox + corners[key].x * cw}px`;
+    el.style.top  = `${oy + corners[key].y * ch}px`;
+  });
+}
+
+function updateCornerLines() {
+  const wrap   = document.getElementById('scanCanvasWrap');
+  const canvas = document.getElementById('scanCanvas');
+  const wRect  = wrap.getBoundingClientRect();
+  const cRect  = canvas.getBoundingClientRect();
+  const ox = (cRect.left - wRect.left) / wRect.width  * 100;
+  const oy = (cRect.top  - wRect.top)  / wRect.height * 100;
+  const sw = cRect.width  / wRect.width  * 100;
+  const sh = cRect.height / wRect.height * 100;
+  const { tl, tr, bl, br } = scanEditor.corners;
+  const p = (key, f) => ox + scanEditor.corners[key].x * sw + ',' + (oy + scanEditor.corners[key].y * sh);
+  const poly = document.getElementById('cornerPoly');
+  poly.setAttribute('points',
+    `${ox+tl.x*sw},${oy+tl.y*sh} ${ox+tr.x*sw},${oy+tr.y*sh} ${ox+br.x*sw},${oy+br.y*sh} ${ox+bl.x*sw},${oy+bl.y*sh}`
+  );
+}
+
+// ── Corner drag (touch + mouse) ──────────────────────────────────────────
+function initCornerDrag() {
+  ['tl','tr','bl','br'].forEach(key => {
+    const el = document.getElementById(`ch-${key}`);
+    const onStart = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      scanEditor.dragCorner = key;
+    };
+    const onMove = (e) => {
+      if (scanEditor.dragCorner !== key) return;
+      e.preventDefault();
+      const touch   = e.touches ? e.touches[0] : e;
+      const canvas  = document.getElementById('scanCanvas');
+      const cRect   = canvas.getBoundingClientRect();
+      const wrap    = document.getElementById('scanCanvasWrap');
+      const wRect   = wrap.getBoundingClientRect();
+      let fx = (touch.clientX - cRect.left) / cRect.width;
+      let fy = (touch.clientY - cRect.top)  / cRect.height;
+      fx = Math.max(0, Math.min(1, fx));
+      fy = Math.max(0, Math.min(1, fy));
+      scanEditor.corners[key] = { x: fx, y: fy };
+      updateCornerHandles();
+      updateCornerLines();
+      drawEditorPreview();
+    };
+    const onEnd = () => { scanEditor.dragCorner = null; };
+    el.addEventListener('touchstart', onStart, { passive: false });
+    el.addEventListener('touchmove',  onMove,  { passive: false });
+    el.addEventListener('touchend',   onEnd);
+    el.addEventListener('mousedown',  onStart);
+    window.addEventListener('mousemove', e => { if(scanEditor.dragCorner===key) onMove(e); });
+    window.addEventListener('mouseup',   onEnd);
+  });
+}
+
+// ── Mode button handlers ──────────────────────────────────────────────────
+['modeColor','modeGrayscale','modeScan','modeEnhance'].forEach(id => {
+  document.getElementById(id).addEventListener('click', () => {
+    scanEditor.mode = document.getElementById(id).dataset.mode;
+    ['modeColor','modeGrayscale','modeScan','modeEnhance'].forEach(bid =>
+      document.getElementById(bid).classList.remove('active')
+    );
+    document.getElementById(id).classList.add('active');
+    drawEditorPreview();
+  });
+});
+
+// ── Slider handlers ───────────────────────────────────────────────────────
+document.getElementById('sliderBright').addEventListener('input', e => {
+  scanEditor.brightness = +e.target.value;
+  document.getElementById('valBright').textContent = e.target.value;
+  drawEditorPreview();
+});
+document.getElementById('sliderContrast').addEventListener('input', e => {
+  scanEditor.contrast = +e.target.value;
+  document.getElementById('valContrast').textContent = e.target.value;
+  drawEditorPreview();
+});
+document.getElementById('sliderSharp').addEventListener('input', e => {
+  scanEditor.sharpness = +e.target.value;
+  document.getElementById('valSharp').textContent = e.target.value;
+  drawEditorPreview();
+});
+
+// ── Cancel ────────────────────────────────────────────────────────────────
+document.getElementById('scanCancelBtn').addEventListener('click', () => {
+  document.getElementById('scanEditorOverlay').classList.remove('open');
+  scanEditor.queue = [];
+  setPhotoLoading(null);
+});
+
+// ── Apply (finalise this photo, move to next) ─────────────────────────────
+document.getElementById('scanApplyBtn').addEventListener('click', async () => {
+  const processing = document.getElementById('scanProcessing');
+  processing.classList.remove('hidden');
+  await new Promise(r => setTimeout(r, 50)); // let UI update
+
+  // Build final high-res canvas from original image
+  const img = scanEditor.sourceImg;
+  const offCanvas = document.createElement('canvas');
+  const { tl, tr, bl, br } = scanEditor.corners;
+  const ow = img.naturalWidth, oh = img.naturalHeight;
+
+  // Compute bounding box of selected corners
+  const xs = [tl.x, tr.x, bl.x, br.x].map(v => v*ow);
+  const ys = [tl.y, tr.y, bl.y, br.y].map(v => v*oh);
+  const minX = Math.round(Math.min(...xs)), maxX = Math.round(Math.max(...xs));
+  const minY = Math.round(Math.min(...ys)), maxY = Math.round(Math.max(...ys));
+  offCanvas.width  = Math.max(maxX - minX, 1);
+  offCanvas.height = Math.max(maxY - minY, 1);
+
+  const octx = offCanvas.getContext('2d', { willReadFrequently: true });
+  // Draw cropped region from original
+  octx.drawImage(img, minX, minY, offCanvas.width, offCanvas.height, 0, 0, offCanvas.width, offCanvas.height);
+
+  // Apply enhancements on full-res
+  let imgData = octx.getImageData(0, 0, offCanvas.width, offCanvas.height);
+  imgData = applyEnhancements(imgData);
+  octx.putImageData(imgData, 0, 0);
+
+  // Apply sharpening
+  applySharpening(offCanvas, scanEditor.sharpness);
+
+  // Export as JPEG (quality 0.92 — matches CamScanner output)
+  const uri = offCanvas.toDataURL('image/jpeg', 0.92);
+  scanEditor._results.push({ uri, name: `scan_${Date.now()}.jpg` });
+
+  processing.classList.add('hidden');
+  document.getElementById('scanEditorOverlay').classList.remove('open');
+
+  scanEditor.currentIdx++;
+  setTimeout(() => {
+    if (scanEditor.currentIdx < scanEditor.queue.length) {
+      loadNextInEditor();
+    } else {
+      state.photos.push(...scanEditor._results);
+      renderPhotos();
+      showToast(`${scanEditor._results.length} foto ditambahkan`, 'success', 1600);
+      setPhotoLoading(null);
+    }
+  }, 120);
+});
+
+// Init drag listeners
+initCornerDrag();
+// Redraw on resize
+window.addEventListener('resize', () => {
+  if (scanEditor.sourceImg && document.getElementById('scanEditorOverlay').classList.contains('open')) {
+    drawEditorPreview();
+  }
+});
+
+// ── handleFiles now routes through scan editor ────────────────────────────
 function handleFiles(files, source) {
   setPhotoLoading(source);
-  const readers = [...files].map(file => new Promise(res => {
-    const r = new FileReader();
-    r.onload = e => res({ uri: e.target.result, name: file.name });
-    r.readAsDataURL(file);
-  }));
-  Promise.all(readers).then(results => {
-    state.photos.push(...results);
-    renderPhotos();
-    showToast(`${results.length} foto ditambahkan`, 'success', 1600);
-    setPhotoLoading(null);
-  }).catch(() => { showToast('Gagal memuat foto', 'error'); setPhotoLoading(null); });
+  openScanEditor(files, source);
 }
 
 document.getElementById('cameraInput').addEventListener('change', e => {
   if (e.target.files.length) handleFiles(e.target.files, 'camera');
-  e.target.value = ''; // reset agar bisa pilih file sama
+  e.target.value = '';
 });
 document.getElementById('galleryInput').addEventListener('change', e => {
   if (e.target.files.length) handleFiles(e.target.files, 'gallery');
