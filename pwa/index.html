@@ -15,6 +15,20 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async></script>
+<!-- OpenCV.js — lazy loaded setelah app siap -->
+<script>
+window._cvReady = false;
+window._cvCallbacks = [];
+function onOpenCvReady() {
+  window._cvReady = true;
+  window._cvCallbacks.forEach(fn => fn());
+  window._cvCallbacks = [];
+}
+function whenCvReady(fn) {
+  if (window._cvReady) fn();
+  else window._cvCallbacks.push(fn);
+}
+</script>
 
 <style>
 /* ── Reset & Base ──────────────────────────────────────────────────────── */
@@ -891,9 +905,12 @@ input[type=range].scan-range::-webkit-slider-thumb {
       <div class="scan-editor-title">✨ Enhance Dokumen</div>
       <div class="scan-editor-sub">Sesuaikan sudut & kualitas scan</div>
     </div>
-    <button class="scan-close-btn" id="scanCancelBtn">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <div id="cvStatusBadge" style="font-size:10px;font-weight:700;padding:3px 8px;border-radius:6px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.5);">OpenCV...</div>
+      <button class="scan-close-btn" id="scanCancelBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
   </div>
 
   <!-- Canvas area -->
@@ -929,6 +946,9 @@ input[type=range].scan-range::-webkit-slider-thumb {
     </button>
     <button class="scan-ctrl-btn" id="modeEnhance" data-mode="enhance">
       <span class="scan-ctrl-icon">⚡</span> Auto Enhance
+    </button>
+    <button class="scan-ctrl-btn" id="resetCornersBtn">
+      <span class="scan-ctrl-icon">🔄</span> Reset Sudut
     </button>
   </div>
 
@@ -1282,57 +1302,247 @@ function setPhotoLoading(source) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// SCAN EDITOR — CamScanner-like document enhancement
+// SCAN EDITOR — OpenCV.js powered (CamScanner-grade)
 // ════════════════════════════════════════════════════════════════════════════
+
+// Lazy-load OpenCV.js saat pertama kali dibutuhkan
+let _cvLoadStarted = false;
+function ensureOpenCV() {
+  if (_cvLoadStarted) return;
+  _cvLoadStarted = true;
+  const s = document.createElement('script');
+  s.src = 'https://docs.opencv.org/4.8.0/opencv.js';
+  s.async = true;
+  s.onload = () => { if (typeof cv !== 'undefined' && cv.then) { cv.then(() => onOpenCvReady()); } else { onOpenCvReady(); } };
+  s.onerror = () => { console.warn('OpenCV.js gagal load — fallback ke manual'); onOpenCvReady(); };
+  document.head.appendChild(s);
+}
+
 const scanEditor = {
-  queue: [],          // files waiting to be edited
+  queue: [],
   currentIdx: 0,
-  sourceImg: null,    // original HTMLImageElement
-  mode: 'color',      // color | grayscale | scan | enhance
+  sourceImg: null,
+  orientedCanvas: null,
+  mode: 'color',
   brightness: 0,
   contrast: 0,
   sharpness: 3,
-  corners: null,      // { tl, tr, bl, br } in canvas-relative fraction (0-1)
+  corners: null,
   dragCorner: null,
-  canvasRect: null,
 };
 
-// ── Open editor for next image in queue ─────────────────────────────────
+// ── Open editor ──────────────────────────────────────────────────────────
 function openScanEditor(files, source) {
-  scanEditor.queue = [...files];
+  ensureOpenCV(); // lazy-load OpenCV saat pertama dipakai
+  scanEditor.queue      = [...files];
   scanEditor.currentIdx = 0;
-  scanEditor._source = source;
-  scanEditor._results = [];
+  scanEditor._source    = source;
+  scanEditor._results   = [];
   loadNextInEditor();
 }
 
+// ── EXIF orientation (pure JS) ────────────────────────────────────────────
+function readExifOrientation(buf) {
+  try {
+    const v = new DataView(buf);
+    if (v.getUint16(0,false) !== 0xFFD8) return 1;
+    let o = 2;
+    while (o < v.byteLength) {
+      const m = v.getUint16(o,false); o += 2;
+      if (m === 0xFFE1) {
+        o += 2;
+        if (v.getUint32(o,false) !== 0x45786966) return 1;
+        const t  = o + 6;
+        const le = v.getUint16(t,false) === 0x4949;
+        const id = v.getUint32(t+4,le);
+        const n  = v.getUint16(t+id,le);
+        for (let i=0;i<n;i++) {
+          const e = t+id+2+i*12;
+          if (v.getUint16(e,le)===0x0112) return v.getUint16(e+8,le);
+        }
+      } else if ((m&0xFF00)!==0xFF00) break;
+      else o += v.getUint16(o,false);
+    }
+  } catch(e){}
+  return 1;
+}
+
+// ── Create EXIF-corrected canvas (always portrait-up) ─────────────────────
+function createOrientedCanvas(img, ori) {
+  const oc = document.createElement('canvas');
+  const w  = img.naturalWidth, h = img.naturalHeight;
+  const sw = ori>=5&&ori<=8;
+  oc.width  = sw ? h : w;
+  oc.height = sw ? w : h;
+  const ctx = oc.getContext('2d');
+  switch(ori) {
+    case 2: ctx.transform(-1,0,0,1,w,0); break;
+    case 3: ctx.transform(-1,0,0,-1,w,h); break;
+    case 4: ctx.transform(1,0,0,-1,0,h); break;
+    case 5: ctx.transform(0,1,1,0,0,0); break;
+    case 6: ctx.transform(0,1,-1,0,h,0); break;
+    case 7: ctx.transform(0,-1,-1,0,h,w); break;
+    case 8: ctx.transform(0,-1,1,0,0,w); break;
+  }
+  ctx.drawImage(img,0,0);
+  return oc;
+}
+
+// ── OpenCV: detect document corners (findContours + approxPolyDP) ─────────
+function cvDetectCorners(srcCanvas) {
+  // Returns { tl, tr, bl, br } as fractions 0-1, or null on failure
+  if (typeof cv === 'undefined' || !window._cvReady) return null;
+  let src, gray, blur, edges, contours, hierarchy, best;
+  try {
+    src       = cv.imread(srcCanvas);
+    gray      = new cv.Mat();
+    blur      = new cv.Mat();
+    edges     = new cv.Mat();
+    contours  = new cv.MatVector();
+    hierarchy = new cv.Mat();
+
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0);
+    cv.Canny(blur, edges, 75, 200);
+
+    // Dilate edges slightly so contours connect better
+    const kernel = cv.Mat.ones(3,3,cv.CV_8U);
+    cv.dilate(edges, edges, kernel);
+    kernel.delete();
+
+    cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+    const W = srcCanvas.width, H = srcCanvas.height;
+    const imgArea = W * H;
+    let bestArea = 0;
+    let bestPoly = null;
+
+    for (let i=0; i<contours.size(); i++) {
+      const cnt  = contours.get(i);
+      const peri = cv.arcLength(cnt, true);
+      const poly = new cv.Mat();
+      cv.approxPolyDP(cnt, poly, 0.02*peri, true);
+
+      if (poly.rows === 4) {
+        const area = Math.abs(cv.contourArea(poly));
+        if (area > bestArea && area > imgArea*0.1 && area < imgArea*0.98) {
+          bestArea = area;
+          if (bestPoly) bestPoly.delete();
+          bestPoly = poly;
+        } else poly.delete();
+      } else poly.delete();
+      cnt.delete();
+    }
+
+    if (bestPoly) {
+      // Extract 4 points and sort into tl, tr, bl, br
+      const pts = [];
+      for (let i=0;i<4;i++) pts.push({ x: bestPoly.data32S[i*2]/W, y: bestPoly.data32S[i*2+1]/H });
+      bestPoly.delete();
+
+      // Sort: tl=min(x+y), br=max(x+y), tr=min(y-x), bl=max(y-x)
+      pts.sort((a,b)=>(a.x+a.y)-(b.x+b.y));
+      const tl = pts[0], br = pts[3];
+      const mid = [pts[1],pts[2]];
+      const tr  = mid[0].x > mid[1].x ? mid[0] : mid[1];
+      const bl  = mid[0].x > mid[1].x ? mid[1] : mid[0];
+
+      // Sanity check
+      if (tr.x-tl.x > 0.15 && bl.y-tl.y > 0.15) {
+        best = { tl, tr, bl, br };
+      }
+    }
+  } catch(e) { console.warn('cv detect error', e); }
+  finally {
+    try { src?.delete(); gray?.delete(); blur?.delete(); edges?.delete(); contours?.delete(); hierarchy?.delete(); } catch(e){}
+  }
+  return best || null;
+}
+
+// ── Fallback: pure-JS Sobel edge scan ─────────────────────────────────────
+function fallbackDetectCorners(canvas) {
+  const ctx  = canvas.getContext('2d', { willReadFrequently:true });
+  const w    = canvas.width, h = canvas.height;
+  const data = ctx.getImageData(0,0,w,h).data;
+  const step = 4;
+  function grad(x,y) {
+    if (x<=0||y<=0||x>=w-1||y>=h-1) return 0;
+    const i=(y*w+x)*4;
+    const gx=data[i+4]-data[i-4], gy=data[(y+1)*w*4+x*4]-data[(y-1)*w*4+x*4];
+    return Math.sqrt(gx*gx+gy*gy);
+  }
+  function findEdge(axis, from, to, oFrom, oTo) {
+    const size=axis==='row'?h:w, other=axis==='row'?w:h;
+    const f=Math.round(from*size), t=Math.round(to*size);
+    const of=Math.round(oFrom*other), ot=Math.round(oTo*other);
+    let best=from, bestG=-1;
+    for(let i=f;i<=t;i+=step){
+      let g=0,c=0;
+      for(let j=of;j<ot;j+=step){ g+=axis==='row'?grad(j,i):grad(i,j); c++; }
+      const avg=c>0?g/c:0;
+      if(avg>bestG){bestG=avg;best=i/size;}
+    }
+    return best;
+  }
+  const t=findEdge('row',0.04,0.40,0.2,0.8);
+  const b=findEdge('row',0.60,0.96,0.2,0.8);
+  const l=findEdge('col',0.04,0.40,0.2,0.8);
+  const r=findEdge('col',0.60,0.96,0.2,0.8);
+  if(r-l<0.25||b-t<0.25) return {tl:{x:0.04,y:0.03},tr:{x:0.96,y:0.03},bl:{x:0.04,y:0.97},br:{x:0.96,y:0.97}};
+  return {tl:{x:l,y:t},tr:{x:r,y:t},bl:{x:l,y:b},br:{x:r,y:b}};
+}
+
+// ── loadNextInEditor: EXIF → orient → OpenCV detect → show editor ─────────
 function loadNextInEditor() {
   if (scanEditor.currentIdx >= scanEditor.queue.length) {
-    // All done — push results to state
     state.photos.push(...scanEditor._results);
     renderPhotos();
-    showToast(`${scanEditor._results.length} foto ditambahkan`, 'success', 1600);
+    showToast(`${scanEditor._results.length} foto ditambahkan`,'success',1600);
     setPhotoLoading(null);
     return;
   }
   const file = scanEditor.queue[scanEditor.currentIdx];
-  const reader = new FileReader();
-  reader.onload = e => {
-    const img = new Image();
-    img.onload = () => {
-      scanEditor.sourceImg = img;
-      resetEditorState();
-      drawEditorPreview();
-      document.getElementById('scanEditorOverlay').classList.add('open');
-      // Update sub text for multi-photo
-      const total = scanEditor.queue.length;
-      const cur   = scanEditor.currentIdx + 1;
-      document.querySelector('.scan-editor-sub').textContent =
-        total > 1 ? `Foto ${cur} dari ${total} — sesuaikan sudut & kualitas` : 'Sesuaikan sudut & kualitas scan';
+  const abReader = new FileReader();
+  abReader.onload = abEv => {
+    const orientation = readExifOrientation(abEv.target.result);
+    const urlReader = new FileReader();
+    urlReader.onload = urlEv => {
+      const img = new Image();
+      img.onload = () => {
+        // 1. Correct orientation
+        const oc = createOrientedCanvas(img, orientation);
+        // 2. Convert back to Image so drawEditorPreview can use naturalWidth/Height
+        const ci = new Image();
+        ci.onload = () => {
+          scanEditor.sourceImg      = ci;
+          scanEditor.orientedCanvas = oc;
+          resetEditorState();
+
+          // 3. Detect corners: try OpenCV first, fallback to Sobel
+          const smallC  = document.createElement('canvas');
+          const maxSide = 600;
+          const sc = Math.min(maxSide/oc.width, maxSide/oc.height);
+          smallC.width  = Math.round(oc.width*sc);
+          smallC.height = Math.round(oc.height*sc);
+          smallC.getContext('2d').drawImage(oc,0,0,smallC.width,smallC.height);
+
+          const corners = cvDetectCorners(smallC) || fallbackDetectCorners(smallC);
+          scanEditor.corners = corners;
+
+          // 4. Show editor
+          drawEditorPreview();
+          document.getElementById('scanEditorOverlay').classList.add('open');
+          const total=scanEditor.queue.length, cur=scanEditor.currentIdx+1;
+          document.querySelector('.scan-editor-sub').textContent =
+            total>1 ? `Foto ${cur} dari ${total} — sesuaikan sudut & kualitas` : 'Sesuaikan sudut & kualitas scan';
+        };
+        ci.src = oc.toDataURL('image/jpeg', 0.95);
+      };
+      img.src = urlEv.target.result;
     };
-    img.src = e.target.result;
+    urlReader.readAsDataURL(file);
   };
-  reader.readAsDataURL(file);
+  abReader.readAsArrayBuffer(file);
 }
 
 function resetEditorState() {
@@ -1355,13 +1565,66 @@ function resetEditorState() {
   document.getElementById('modeColor').classList.add('active');
 }
 
-// ── Draw preview on canvas with current settings ─────────────────────────
+// ── OpenCV warpPerspective helper ─────────────────────────────────────────
+function cvWarpPerspective(srcCanvas, corners, dstW, dstH) {
+  // Returns a new canvas with the perspective-corrected document
+  if (typeof cv === 'undefined' || !window._cvReady) return null;
+  let src, dst, srcPts, dstPts, M;
+  try {
+    const W = srcCanvas.width, H = srcCanvas.height;
+    const { tl, tr, bl, br } = corners;
+    src = cv.imread(srcCanvas);
+    dst = new cv.Mat();
+
+    srcPts = cv.matFromArray(4,1,cv.CV_32FC2,[
+      tl.x*W, tl.y*H,
+      tr.x*W, tr.y*H,
+      br.x*W, br.y*H,
+      bl.x*W, bl.y*H,
+    ]);
+    dstPts = cv.matFromArray(4,1,cv.CV_32FC2,[
+      0,    0,
+      dstW, 0,
+      dstW, dstH,
+      0,    dstH,
+    ]);
+    M = cv.getPerspectiveTransform(srcPts, dstPts);
+    cv.warpPerspective(src, dst, M, new cv.Size(dstW, dstH), cv.INTER_LINEAR, cv.BORDER_CONSTANT);
+
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width  = dstW;
+    outCanvas.height = dstH;
+    cv.imshow(outCanvas, dst);
+    return outCanvas;
+  } catch(e) { console.warn('warpPerspective error', e); return null; }
+  finally { try{src?.delete();dst?.delete();srcPts?.delete();dstPts?.delete();M?.delete();}catch(e){} }
+}
+
+// ── OpenCV adaptiveThreshold for scan mode ────────────────────────────────
+function cvAdaptiveThreshold(canvas) {
+  if (typeof cv === 'undefined' || !window._cvReady) return null;
+  let src, gray, dst;
+  try {
+    src  = cv.imread(canvas);
+    gray = new cv.Mat();
+    dst  = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.adaptiveThreshold(gray, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 21, 10);
+    const out = document.createElement('canvas');
+    out.width  = canvas.width;
+    out.height = canvas.height;
+    cv.imshow(out, dst);
+    return out;
+  } catch(e) { return null; }
+  finally { try{src?.delete();gray?.delete();dst?.delete();}catch(e){} }
+}
+
+// ── Draw preview on canvas ────────────────────────────────────────────────
 function drawEditorPreview() {
-  const overlay  = document.getElementById('scanEditorOverlay');
-  const wrap     = document.getElementById('scanCanvasWrap');
-  const canvas   = document.getElementById('scanCanvas');
-  const ctx      = canvas.getContext('2d', { willReadFrequently: true });
-  const img      = scanEditor.sourceImg;
+  const wrap   = document.getElementById('scanCanvasWrap');
+  const canvas = document.getElementById('scanCanvas');
+  const ctx    = canvas.getContext('2d', { willReadFrequently: true });
+  const img    = scanEditor.sourceImg;
 
   // Fit canvas to wrap
   const wrapW = wrap.clientWidth  || window.innerWidth  - 24;
@@ -1369,86 +1632,97 @@ function drawEditorPreview() {
   const scale = Math.min(wrapW / img.naturalWidth, wrapH / img.naturalHeight);
   canvas.width  = Math.round(img.naturalWidth  * scale);
   canvas.height = Math.round(img.naturalHeight * scale);
-  scanEditor.canvasRect = { w: canvas.width, h: canvas.height };
 
-  // Draw source image
+  // Draw source image full
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-  // Apply perspective warp (crop to corners)
+  // Draw semi-transparent overlay outside selection
   const { tl, tr, bl, br } = scanEditor.corners;
   const cw = canvas.width, ch = canvas.height;
-  const pts = {
-    tl: { x: tl.x*cw, y: tl.y*ch },
-    tr: { x: tr.x*cw, y: tr.y*ch },
-    bl: { x: bl.x*cw, y: bl.y*ch },
-    br: { x: br.x*cw, y: br.y*ch },
-  };
-
-  // Clip to polygon
   ctx.save();
-  ctx.globalCompositeOperation = 'destination-in';
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  ctx.fillRect(0, 0, cw, ch);
+  // Cut out the selection polygon (show original through)
+  ctx.globalCompositeOperation = 'destination-out';
   ctx.beginPath();
-  ctx.moveTo(pts.tl.x, pts.tl.y);
-  ctx.lineTo(pts.tr.x, pts.tr.y);
-  ctx.lineTo(pts.br.x, pts.br.y);
-  ctx.lineTo(pts.bl.x, pts.bl.y);
+  ctx.moveTo(tl.x*cw, tl.y*ch);
+  ctx.lineTo(tr.x*cw, tr.y*ch);
+  ctx.lineTo(br.x*cw, br.y*ch);
+  ctx.lineTo(bl.x*cw, bl.y*ch);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
 
-  // Get pixel data for enhancement
-  let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  imgData = applyEnhancements(imgData);
-  ctx.putImageData(imgData, 0, 0);
+  // Redraw source under selection (clear composite side-effect)
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-over';
+  ctx.drawImage(img, 0, 0, cw, ch);
+  ctx.restore();
 
-  // Update corner handles position
+  // Draw selection border
+  ctx.save();
+  ctx.strokeStyle = '#4F46E5';
+  ctx.lineWidth   = 2;
+  ctx.setLineDash([6,4]);
+  ctx.beginPath();
+  ctx.moveTo(tl.x*cw, tl.y*ch);
+  ctx.lineTo(tr.x*cw, tr.y*ch);
+  ctx.lineTo(br.x*cw, br.y*ch);
+  ctx.lineTo(bl.x*cw, bl.y*ch);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+
   updateCornerHandles();
   updateCornerLines();
 }
 
-// ── Image processing pipeline ────────────────────────────────────────────
+// ── Image processing pipeline ─────────────────────────────────────────────
 function applyEnhancements(imgData) {
-  const d    = imgData.data;
-  const mode = scanEditor.mode;
+  const d        = imgData.data;
+  const mode     = scanEditor.mode;
   const bright   = scanEditor.brightness;
   const contrast = scanEditor.contrast;
-  const sharp    = scanEditor.sharpness;
 
-  // 1. Brightness & Contrast
+  // Brightness & Contrast (S-curve formula — lebih natural dari linear)
   const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i+3] === 0) continue; // skip transparent
-    d[i]   = clamp(factor * (d[i]   - 128) + 128 + bright);
-    d[i+1] = clamp(factor * (d[i+1] - 128) + 128 + bright);
-    d[i+2] = clamp(factor * (d[i+2] - 128) + 128 + bright);
+  for (let i=0; i<d.length; i+=4) {
+    if (d[i+3] === 0) continue;
+    d[i]   = clamp(factor*(d[i]  -128)+128+bright);
+    d[i+1] = clamp(factor*(d[i+1]-128)+128+bright);
+    d[i+2] = clamp(factor*(d[i+2]-128)+128+bright);
   }
 
-  // 2. Mode: grayscale / scan / enhance
-  if (mode === 'grayscale' || mode === 'scan' || mode === 'enhance') {
-    for (let i = 0; i < d.length; i += 4) {
+  // Grayscale conversion untuk semua mode non-color
+  if (mode === 'grayscale' || mode === 'enhance') {
+    for (let i=0; i<d.length; i+=4) {
       if (d[i+3] === 0) continue;
       const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
       d[i] = d[i+1] = d[i+2] = lum;
     }
   }
 
-  if (mode === 'scan') {
-    // Adaptive threshold — high contrast B&W like scanned doc
-    for (let i = 0; i < d.length; i += 4) {
+  // Mode Enhance: S-curve untuk dokumen (background putih, teks gelap)
+  if (mode === 'enhance') {
+    for (let i=0; i<d.length; i+=4) {
       if (d[i+3] === 0) continue;
-      const v = d[i] > 148 ? 255 : 0;
-      d[i] = d[i+1] = d[i+2] = v;
+      let v = d[i];
+      // Tekan shadow, angkat highlight — mirip "magic color" CamScanner
+      v = v < 85  ? v * 0.60 :
+          v < 170 ? 51 + (v-85)*1.15 :
+          Math.min(255, 148.75 + (v-170)*1.65);
+      d[i] = d[i+1] = d[i+2] = clamp(v);
     }
   }
 
-  if (mode === 'enhance') {
-    // Boost shadows + highlights for document feel
-    for (let i = 0; i < d.length; i += 4) {
+  // Mode Scan: simple threshold (OpenCV adaptiveThreshold dipakai saat export)
+  if (mode === 'scan') {
+    // Preview pakai simple threshold yang cepat
+    for (let i=0; i<d.length; i+=4) {
       if (d[i+3] === 0) continue;
-      let v = d[i];
-      // S-curve for document contrast
-      v = v < 100 ? v * 0.75 : v > 180 ? Math.min(255, v * 1.1 + 12) : v;
-      d[i] = d[i+1] = d[i+2] = clamp(v);
+      const lum = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2];
+      const v   = lum > 145 ? 255 : 0;
+      d[i] = d[i+1] = d[i+2] = v;
     }
   }
 
@@ -1554,7 +1828,41 @@ function initCornerDrag() {
   });
 }
 
-// ── Mode button handlers ──────────────────────────────────────────────────
+// ── Reset corners button ──────────────────────────────────────────────────
+document.getElementById('resetCornersBtn').addEventListener('click', () => {
+  if (!scanEditor.sourceImg) return;
+  // Re-run auto detect
+  const oc = scanEditor.orientedCanvas;
+  if (!oc) {
+    scanEditor.corners = {tl:{x:0.04,y:0.03},tr:{x:0.96,y:0.03},bl:{x:0.04,y:0.97},br:{x:0.96,y:0.97}};
+  } else {
+    const sc = document.createElement('canvas');
+    const mx = 600, s = Math.min(mx/oc.width, mx/oc.height);
+    sc.width  = Math.round(oc.width*s);
+    sc.height = Math.round(oc.height*s);
+    sc.getContext('2d').drawImage(oc,0,0,sc.width,sc.height);
+    scanEditor.corners = cvDetectCorners(sc) || fallbackDetectCorners(sc);
+  }
+  drawEditorPreview();
+  showToast('Sudut direset otomatis','info',1200);
+});
+
+// ── OpenCV status badge ───────────────────────────────────────────────────
+function updateCvBadge() {
+  const badge = document.getElementById('cvStatusBadge');
+  if (!badge) return;
+  if (window._cvReady && typeof cv !== 'undefined') {
+    badge.textContent = '⚡ OpenCV';
+    badge.style.background = 'rgba(22,163,74,0.3)';
+    badge.style.color = '#4ADE80';
+  } else {
+    badge.textContent = '⏳ Loading...';
+    badge.style.background = 'rgba(255,255,255,.1)';
+    badge.style.color = 'rgba(255,255,255,.5)';
+  }
+}
+whenCvReady(() => { updateCvBadge(); });
+updateCvBadge();
 ['modeColor','modeGrayscale','modeScan','modeEnhance'].forEach(id => {
   document.getElementById(id).addEventListener('click', () => {
     scanEditor.mode = document.getElementById(id).dataset.mode;
@@ -1590,41 +1898,85 @@ document.getElementById('scanCancelBtn').addEventListener('click', () => {
   setPhotoLoading(null);
 });
 
-// ── Apply (finalise this photo, move to next) ─────────────────────────────
+// ── Apply: OpenCV warpPerspective → enhancement → export ─────────────────
 document.getElementById('scanApplyBtn').addEventListener('click', async () => {
   const processing = document.getElementById('scanProcessing');
   processing.classList.remove('hidden');
-  await new Promise(r => setTimeout(r, 50)); // let UI update
+  await new Promise(r => setTimeout(r, 60));
 
-  // Build final high-res canvas from original image
-  const img = scanEditor.sourceImg;
-  const offCanvas = document.createElement('canvas');
-  const { tl, tr, bl, br } = scanEditor.corners;
-  const ow = img.naturalWidth, oh = img.naturalHeight;
+  try {
+    // Source: full-res EXIF-corrected canvas
+    const srcC = scanEditor.orientedCanvas || (() => {
+      const fc = document.createElement('canvas');
+      fc.width  = scanEditor.sourceImg.naturalWidth;
+      fc.height = scanEditor.sourceImg.naturalHeight;
+      fc.getContext('2d').drawImage(scanEditor.sourceImg,0,0);
+      return fc;
+    })();
 
-  // Compute bounding box of selected corners
-  const xs = [tl.x, tr.x, bl.x, br.x].map(v => v*ow);
-  const ys = [tl.y, tr.y, bl.y, br.y].map(v => v*oh);
-  const minX = Math.round(Math.min(...xs)), maxX = Math.round(Math.max(...xs));
-  const minY = Math.round(Math.min(...ys)), maxY = Math.round(Math.max(...ys));
-  offCanvas.width  = Math.max(maxX - minX, 1);
-  offCanvas.height = Math.max(maxY - minY, 1);
+    const { tl, tr, bl, br } = scanEditor.corners;
+    const W = srcC.width, H = srcC.height;
 
-  const octx = offCanvas.getContext('2d', { willReadFrequently: true });
-  // Draw cropped region from original
-  octx.drawImage(img, minX, minY, offCanvas.width, offCanvas.height, 0, 0, offCanvas.width, offCanvas.height);
+    // Compute output size dari projected corners (A4-ratio friendly)
+    const widthTop  = Math.hypot((tr.x-tl.x)*W, (tr.y-tl.y)*H);
+    const widthBot  = Math.hypot((br.x-bl.x)*W, (br.y-bl.y)*H);
+    const heightL   = Math.hypot((bl.x-tl.x)*W, (bl.y-tl.y)*H);
+    const heightR   = Math.hypot((br.x-tr.x)*W, (br.y-tr.y)*H);
+    const outW = Math.round(Math.max(widthTop, widthBot));
+    const outH = Math.round(Math.max(heightL,  heightR));
 
-  // Apply enhancements on full-res
-  let imgData = octx.getImageData(0, 0, offCanvas.width, offCanvas.height);
-  imgData = applyEnhancements(imgData);
-  octx.putImageData(imgData, 0, 0);
+    let finalCanvas = null;
 
-  // Apply sharpening
-  applySharpening(offCanvas, scanEditor.sharpness);
+    // ① Try OpenCV warpPerspective (true perspective correction)
+    if (window._cvReady && typeof cv !== 'undefined') {
+      finalCanvas = cvWarpPerspective(srcC, scanEditor.corners, outW, outH);
+    }
 
-  // Export as JPEG (quality 0.92 — matches CamScanner output)
-  const uri = offCanvas.toDataURL('image/jpeg', 0.92);
-  scanEditor._results.push({ uri, name: `scan_${Date.now()}.jpg` });
+    // ② Fallback: bounding-box crop (no warp)
+    if (!finalCanvas) {
+      const xs = [tl.x,tr.x,bl.x,br.x].map(v=>v*W);
+      const ys = [tl.y,tr.y,bl.y,br.y].map(v=>v*H);
+      const minX=Math.round(Math.max(0,Math.min(...xs)));
+      const maxX=Math.round(Math.min(W,Math.max(...xs)));
+      const minY=Math.round(Math.max(0,Math.min(...ys)));
+      const maxY=Math.round(Math.min(H,Math.max(...ys)));
+      finalCanvas = document.createElement('canvas');
+      finalCanvas.width  = maxX-minX;
+      finalCanvas.height = maxY-minY;
+      finalCanvas.getContext('2d').drawImage(srcC,minX,minY,finalCanvas.width,finalCanvas.height,0,0,finalCanvas.width,finalCanvas.height);
+    }
+
+    // ③ Mode Scan: OpenCV adaptiveThreshold (jauh lebih baik dari simple threshold)
+    if (scanEditor.mode === 'scan' && window._cvReady && typeof cv !== 'undefined') {
+      const atCanvas = cvAdaptiveThreshold(finalCanvas);
+      if (atCanvas) finalCanvas = atCanvas;
+    }
+
+    // ④ Apply brightness/contrast/grayscale/enhance via pixel pipeline
+    if (scanEditor.mode !== 'scan') {
+      const ctx2   = finalCanvas.getContext('2d', { willReadFrequently:true });
+      let imgData  = ctx2.getImageData(0,0,finalCanvas.width,finalCanvas.height);
+      imgData      = applyEnhancements(imgData);
+      ctx2.putImageData(imgData,0,0);
+    } else if (!window._cvReady) {
+      // scan mode tapi cv belum ready — pakai pixel pipeline
+      const ctx2  = finalCanvas.getContext('2d', { willReadFrequently:true });
+      let imgData = ctx2.getImageData(0,0,finalCanvas.width,finalCanvas.height);
+      imgData     = applyEnhancements(imgData);
+      ctx2.putImageData(imgData,0,0);
+    }
+
+    // ⑤ Sharpening (unsharp mask)
+    applySharpening(finalCanvas, scanEditor.sharpness);
+
+    // ⑥ Export JPEG 0.92
+    const uri = finalCanvas.toDataURL('image/jpeg', 0.92);
+    scanEditor._results.push({ uri, name:`scan_${Date.now()}.jpg` });
+
+  } catch(err) {
+    console.error('Export error', err);
+    showToast('Gagal memproses foto','error');
+  }
 
   processing.classList.add('hidden');
   document.getElementById('scanEditorOverlay').classList.remove('open');
@@ -1636,7 +1988,7 @@ document.getElementById('scanApplyBtn').addEventListener('click', async () => {
     } else {
       state.photos.push(...scanEditor._results);
       renderPhotos();
-      showToast(`${scanEditor._results.length} foto ditambahkan`, 'success', 1600);
+      showToast(`${scanEditor._results.length} foto ditambahkan`,'success',1600);
       setPhotoLoading(null);
     }
   }, 120);
