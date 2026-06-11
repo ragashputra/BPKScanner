@@ -19,22 +19,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.bpkscanner",
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "autoVerify": true,
-          "data": [
-            {
-              "scheme": "com.bpkscanner"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
-        }
-      ]
+      "package": "com.bpkscanner"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -45,7 +30,18 @@
       }
     },
     "plugins": [
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableShrinkResourcesInReleaseBuilds": false,
+            "enableProguardInReleaseBuilds": false
+          }
+        }
+      ],
+      "react-native-document-scanner-plugin",
+      "react-native-vision-camera"
     ]
   }
 }
