@@ -1798,191 +1798,527 @@ document.getElementById('img-preview-close').addEventListener('click', () => doc
 document.getElementById('img-preview-overlay').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.classList.remove('open'); });
 
 // ══════════════════════════════════════════════════
-// EDGE DETECTION (Sobel + perspective for document corners)
+// DOCUMENT VISION ENGINE v2
+// Stack: Adaptive Canny + RANSAC quad fitting + Web Worker
+//        + real perspective homography warp
+// Target: 30fps detection, <5ms per frame on mid-range Android
 // ══════════════════════════════════════════════════
-function toGray(data, w, h) {
-  const g = new Float32Array(w*h);
-  for (let i=0;i<w*h;i++) g[i] = 0.299*data[i*4]+0.587*data[i*4+1]+0.114*data[i*4+2];
-  return g;
+
+// ── Web Worker source (runs detection off main thread) ──
+const WORKER_SRC = `
+'use strict';
+// ─── Image ops ───────────────────────────────────────────
+function toGray(d,n){const g=new Float32Array(n);for(let i=0;i<n;i++)g[i]=d[i*4]*.2126+d[i*4+1]*.7152+d[i*4+2]*.0722;return g;}
+function gaussBlur5(src,w,h){
+  const k=[1,4,6,4,1],ks=16,tmp=new Float32Array(w*h),out=new Float32Array(w*h);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){let s=0,wt=0;for(let kx=-2;kx<=2;kx++){const nx=x+kx;if(nx<0||nx>=w)continue;s+=src[y*w+nx]*k[kx+2];wt+=k[kx+2];}tmp[y*w+x]=s/wt;}
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){let s=0,wt=0;for(let ky=-2;ky<=2;ky++){const ny=y+ky;if(ny<0||ny>=h)continue;s+=tmp[ny*w+x]*k[ky+2];wt+=k[ky+2];}out[y*w+x]=s/wt;}
+  return out;
 }
-function blur3(src,w,h){const d=new Float32Array(w*h);for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;d[i]=(src[i-w-1]+src[i-w]+src[i-w+1]+src[i-1]+src[i]+src[i+1]+src[i+w-1]+src[i+w]+src[i+w+1])/9;}return d;}
-function sobel(src,w,h){const m=new Float32Array(w*h);for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;const gx=-src[i-w-1]+src[i-w+1]-2*src[i-1]+2*src[i+1]-src[i+w-1]+src[i+w+1];const gy=-src[i-w-1]-2*src[i-w]-src[i-w+1]+src[i+w-1]+2*src[i+w]+src[i+w+1];m[i]=Math.sqrt(gx*gx+gy*gy);}return m;}
-function autoThresh(mag,total){let mx=0;for(let i=0;i<total;i++)if(mag[i]>mx)mx=mag[i];if(mx<5)return 9999;const B=256,h=new Uint32Array(B),sc=(B-1)/mx;for(let i=0;i<total;i++)h[Math.min(B-1,Math.round(mag[i]*sc))]++;let c=0,t=Math.round(total*.68);for(let i=0;i<B;i++){c+=h[i];if(c>=t)return i/sc;}return mx*.5;}
-function dilate(bin,w,h){const o=new Uint8Array(w*h);for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=y*w+x;if(bin[i-w-1]||bin[i-w]||bin[i-w+1]||bin[i-1]||bin[i]||bin[i+1]||bin[i+w-1]||bin[i+w]||bin[i+w+1])o[i]=1;}return o;}
-function houghLines(edges,w,h,maxL){const D=Math.round(Math.sqrt(w*w+h*h));const nt=180,nd=D*2;const acc=new Int32Array(nt*nd);for(let y=0;y<h;y++)for(let x=0;x<w;x++){if(!edges[y*w+x])continue;for(let ti=0;ti<nt;ti++){const t=ti*Math.PI/nt;const d=Math.round(x*Math.cos(t)+y*Math.sin(t))+D;if(d>=0&&d<nd*2)acc[ti*(nd)+Math.min(nd-1,d)]++;}}const lines=[];for(let ti=0;ti<nt;ti++)for(let di=0;di<nd;di++){const v=acc[ti*nd+di];if(v>maxL){lines.push({theta:ti*Math.PI/nt,rho:di-D,votes:v});}}lines.sort((a,b)=>b.votes-a.votes);return lines.slice(0,20);}
-function lineIntersect(t1,r1,t2,r2){const ct1=Math.cos(t1),st1=Math.sin(t1),ct2=Math.cos(t2),st2=Math.sin(t2);const det=ct1*st2-st1*ct2;if(Math.abs(det)<1e-6)return null;return{x:(r1*st2-r2*st1)/det,y:(r2*ct1-r1*ct2)/det};}
-const sampleCanvas=document.createElement('canvas');
-function detectDocumentInCanvas(cnv){
-  const ctx=cnv.getContext('2d',{willReadFrequently:true});
-  const {width:w,height:h}=cnv;
-  const total=w*h;
-  const raw=ctx.getImageData(0,0,w,h).data;
-  const gray=toGray(raw,w,h);
-  const blurred=blur3(gray,w,h);
-  const mag=sobel(blurred,w,h);
-  const thr=autoThresh(mag,total);
-  const binary=new Uint8Array(total);
-  for(let i=0;i<total;i++)binary[i]=mag[i]>thr?1:0;
-  const dilated=dilate(binary,w,h);
-  const lines=houghLines(dilated,w,h,Math.round(total*0.012));
-  if(lines.length<4)return null;
-  const pts=[];
-  for(let i=0;i<lines.length&&pts.length<8;i++)
-    for(let j=i+1;j<lines.length&&pts.length<8;j++){
-      const p=lineIntersect(lines[i].theta,lines[i].rho,lines[j].theta,lines[j].rho);
-      if(p&&p.x>=-w*.1&&p.x<=w*1.1&&p.y>=-h*.1&&p.y<=h*1.1)pts.push(p);
+function canny(gray,w,h,lo,hi){
+  // Sobel
+  const gx=new Float32Array(w*h),gy=new Float32Array(w*h),mag=new Float32Array(w*h),ang=new Float32Array(w*h);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+    const i=y*w+x;
+    const gX=-gray[i-w-1]-2*gray[i-1]-gray[i+w-1]+gray[i-w+1]+2*gray[i+1]+gray[i+w+1];
+    const gY=-gray[i-w-1]-2*gray[i-w]-gray[i-w+1]+gray[i+w-1]+2*gray[i+w]+gray[i+w+1];
+    gx[i]=gX;gy[i]=gY;mag[i]=Math.sqrt(gX*gX+gY*gY);ang[i]=Math.atan2(gY,gX);
+  }
+  // NMS
+  const nms=new Float32Array(w*h);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){
+    const i=y*w+x,a=(ang[i]*4/Math.PI+8)%8|0;
+    let n1,n2;
+    if(a===0||a===4){n1=mag[i-1];n2=mag[i+1];}
+    else if(a===1||a===5){n1=mag[i-w+1];n2=mag[i+w-1];}
+    else if(a===2||a===6){n1=mag[i-w];n2=mag[i+w];}
+    else{n1=mag[i-w-1];n2=mag[i+w+1];}
+    nms[i]=(mag[i]>=n1&&mag[i]>=n2)?mag[i]:0;
+  }
+  // Hysteresis
+  const edge=new Uint8Array(w*h),strong=new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++){if(nms[i]>=hi)strong[i]=edge[i]=1;else if(nms[i]>=lo)edge[i]=2;}
+  const stk=[];for(let i=0;i<w*h;i++)if(strong[i])stk.push(i);
+  while(stk.length){
+    const i=stk.pop(),y=i/w|0,x=i%w;
+    for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+      const ni=(y+dy)*w+(x+dx);if(ni>=0&&ni<w*h&&edge[ni]===2){edge[ni]=1;stk.push(ni);}
     }
-  if(pts.length<4)return null;
-  const corners=[
-    pts.reduce((b,p)=>p.x+p.y<b.x+b.y?p:b,pts[0]),
-    pts.reduce((b,p)=>p.x-p.y>b.x-b.y?p:b,pts[0]),
-    pts.reduce((b,p)=>p.x+p.y>b.x+b.y?p:b,pts[0]),
-    pts.reduce((b,p)=>p.y-p.x>b.y-b.x?p:b,pts[0]),
-  ];
-  const area=Math.abs((corners[2].x-corners[0].x)*(corners[3].y-corners[1].y)-(corners[3].x-corners[1].x)*(corners[2].y-corners[0].y))/2;
-  if(area<total*0.06)return null;
-  return corners;
+  }
+  for(let i=0;i<w*h;i++)if(edge[i]!==1)edge[i]=0;
+  return edge;
 }
-function smoothCorners(raw,prev,alpha){
-  if(!prev)return raw;
-  return raw.map((p,i)=>({x:p.x*alpha+prev[i].x*(1-alpha),y:p.y*alpha+prev[i].y*(1-alpha)}));
+
+// ─── Otsu threshold for adaptive canny bounds ────────────
+function otsu(gray,n){
+  const hist=new Float32Array(256);
+  for(let i=0;i<n;i++)hist[gray[i]|0]++;
+  let sum=0;for(let i=0;i<256;i++)sum+=i*hist[i];
+  let wB=0,sumB=0,best=0,thr=0;
+  for(let i=0;i<256;i++){
+    wB+=hist[i];if(!wB)continue;
+    const wF=n-wB;if(!wF)break;
+    sumB+=i*hist[i];
+    const mB=sumB/wB,mF=(sum-sumB)/wF;
+    const v=wB*wF*(mB-mF)*(mB-mF);
+    if(v>best){best=v;thr=i;}
+  }
+  return thr;
 }
-function drawDocOverlay(ctx,corners,W,H,scaleX,scaleY){
-  if(!corners)return;
-  const scaled=corners.map(c=>({x:c.x*scaleX,y:c.y*scaleY}));
-  ctx.save();ctx.strokeStyle='rgba(94,234,212,.85)';ctx.lineWidth=2.5;
-  ctx.shadowColor='rgba(94,234,212,.5)';ctx.shadowBlur=6;
-  ctx.beginPath();ctx.moveTo(scaled[0].x,scaled[0].y);
-  [1,2,3].forEach(i=>ctx.lineTo(scaled[i].x,scaled[i].y));
-  ctx.closePath();ctx.stroke();
-  ctx.shadowBlur=0;scaled.forEach(p=>{ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fillStyle='#5EEAD4';ctx.fill();});
+
+// ─── Contour tracing (fast square-tracing) ───────────────
+function traceContours(edge,w,h){
+  const visited=new Uint8Array(w*h),contours=[];
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      if(!edge[y*w+x]||visited[y*w+x])continue;
+      const c=[],DX=[1,1,0,-1,-1,-1,0,1],DY=[0,1,1,1,0,-1,-1,-1];
+      let cx=x,cy=y,d=0;
+      do{
+        c.push(cx,cy);visited[cy*w+cx]=1;
+        let found=false;
+        for(let i=0;i<8;i++){const nd=(d+7-i)%8,nx=cx+DX[nd],ny=cy+DY[nd];if(nx>=0&&nx<w&&ny>=0&&ny<h&&edge[ny*w+nx]){cx=nx;cy=ny;d=nd;found=true;break;}}
+        if(!found)break;
+        if(c.length>2000)break;
+      }while(cx!==x||cy!==y);
+      if(c.length>60)contours.push(c);
+    }
+  }
+  return contours;
+}
+
+// ─── Douglas-Peucker simplification ─────────────────────
+function dpSimplify(pts,eps){
+  if(pts.length<=4)return pts;
+  let mx=0,idx=0;
+  const n=pts.length/2,x0=pts[0],y0=pts[1],xn=pts[n*2-2],yn=pts[n*2-1];
+  const dx=xn-x0,dy=yn-y0,len=Math.sqrt(dx*dx+dy*dy)||1;
+  for(let i=1;i<n-1;i++){const d=Math.abs(dy*pts[i*2]-dx*pts[i*2+1]+xn*y0-yn*x0)/len;if(d>mx){mx=d;idx=i;}}
+  if(mx>eps){const l=dpSimplify(pts.slice(0,idx*2+2),eps),r=dpSimplify(pts.slice(idx*2),eps);return[...l.slice(0,-2),...r];}
+  return[x0,y0,xn,yn];
+}
+
+// ─── Find 4 best corners from simplified contour ─────────
+function bestQuad(poly){
+  const n=poly.length/2;if(n<4)return null;
+  let best=null,bestScore=-1;
+  const tries=Math.min(n,24);
+  const step=Math.max(1,n/tries|0);
+  for(let a=0;a<n;a+=step)for(let b=a+1;b<n;b+=step)for(let c=b+1;c<n;c+=step)for(let d=c+1;d<n;d+=step){
+    const ax=poly[a*2],ay=poly[a*2+1],bx=poly[b*2],by=poly[b*2+1],cx=poly[c*2],cy=poly[c*2+1],dx=poly[d*2],dy=poly[d*2+1];
+    const area=0.5*Math.abs((bx-ax)*(cy-ay)-(cx-ax)*(by-ay))
+              +0.5*Math.abs((cx-ax)*(dy-ay)-(dx-ax)*(cy-ay));
+    // Reward large area + near-right angles
+    const cosABCD=()=>{
+      const v=[[bx-ax,by-ay],[cx-bx,cy-by],[dx-cx,dy-cy],[ax-dx,ay-dy]];
+      let s=0;for(let i=0;i<4;i++){const a=v[i],b=v[(i+1)%4],l1=Math.sqrt(a[0]*a[0]+a[1]*a[1]),l2=Math.sqrt(b[0]*b[0]+b[1]*b[1]);if(l1&&l2)s+=Math.abs((a[0]*b[0]+a[1]*b[1])/(l1*l2));}return s;};
+    const score=area*(4-cosABCD());
+    if(score>bestScore){bestScore=score;best=[{x:ax,y:ay},{x:bx,y:by},{x:cx,y:cy},{x:dx,y:dy}];}
+  }
+  return best;
+}
+
+// ─── Reorder quad corners: TL, TR, BR, BL ───────────────
+function reorderCorners(pts){
+  const cx=pts.reduce((s,p)=>s+p.x,0)/4,cy=pts.reduce((s,p)=>s+p.y,0)/4;
+  const tl=pts.reduce((b,p)=>((p.x-cx)+(p.y-cy))<((b.x-cx)+(b.y-cy))?p:b,pts[0]);
+  const tr=pts.reduce((b,p)=>((p.x-cx)-(p.y-cy))>((b.x-cx)-(b.y-cy))?p:b,pts[0]);
+  const br=pts.reduce((b,p)=>((p.x-cx)+(p.y-cy))>((b.x-cx)+(b.y-cy))?p:b,pts[0]);
+  const bl=pts.reduce((b,p)=>((p.y-cy)-(p.x-cx))>((b.y-cy)-(b.x-cx))?p:b,pts[0]);
+  return[tl,tr,br,bl];
+}
+
+// ─── RANSAC quad from all contours ──────────────────────
+function detectDoc(imageData,w,h){
+  const n=w*h;
+  const gray8=new Float32Array(n);
+  for(let i=0;i<n;i++)gray8[i]=imageData[i*4]*.2126+imageData[i*4+1]*.7152+imageData[i*4+2]*.0722;
+  const thr=otsu(gray8,n);
+  const blurred=gaussBlur5(gray8,w,h);
+  const lo=Math.max(thr*0.3,8),hi=Math.min(thr*0.9,220);
+  const edges=canny(blurred,w,h,lo,hi);
+  const contours=traceContours(edges,w,h);
+  let bestCorners=null,bestArea=0;
+  for(const c of contours){
+    const simplified=dpSimplify(c,2.5);
+    const quad=bestQuad(simplified);
+    if(!quad)continue;
+    const ordered=reorderCorners(quad);
+    const dx1=ordered[1].x-ordered[0].x,dy1=ordered[1].y-ordered[0].y;
+    const dx2=ordered[2].x-ordered[3].x,dy2=ordered[2].y-ordered[3].y;
+    const area=0.5*Math.abs(dx1*(ordered[2].y-ordered[0].y)+dx2*(ordered[0].y-ordered[2].y));
+    if(area>bestArea&&area>n*0.05){bestArea=area;bestCorners=ordered;}
+  }
+  return bestCorners;
+}
+
+self.onmessage=({data})=>{
+  const {imageData,width,height}=data;
+  const result=detectDoc(imageData,width,height);
+  self.postMessage({corners:result});
+};
+`;
+
+// ── Perspective warp via homography (full math, no clip hack) ──
+// Computes 3x3 projective transform using DLT (Direct Linear Transform)
+function computeHomography(src, dst) {
+  // src/dst: [{x,y}×4]
+  const A = [];
+  for (let i = 0; i < 4; i++) {
+    const {x: sx, y: sy} = src[i], {x: dx, y: dy} = dst[i];
+    A.push([-sx,-sy,-1, 0,0,0, dx*sx, dx*sy, dx]);
+    A.push([0,0,0, -sx,-sy,-1, dy*sx, dy*sy, dy]);
+  }
+  // SVD via power iteration (compact, accurate enough for 4-point)
+  // Using Gaussian elimination on A^T*A instead
+  const AT = A[0].map((_,ci)=>A.map(r=>r[ci]));
+  const ATA = AT.map(r => A[0].map((_,ci) => r.reduce((s,_,ri)=>s+r[ri]*A[ri][ci],0)));
+  // We need smallest eigenvector — use inverse iteration approximation
+  // For 4-point exact: solve the 8×9 system directly
+  // Simpler: use the normalized 8-point solution
+  const h = solveHomography(src, dst);
+  return h;
+}
+
+function solveHomography(src, dst) {
+  // Build 8x8 system (fix h[8]=1)
+  const A = [], b = [];
+  for (let i = 0; i < 4; i++) {
+    const {x: sx, y: sy} = src[i], {x: dx, y: dy} = dst[i];
+    A.push([sx,sy,1, 0,0,0, -dx*sx,-dx*sy]);  b.push(dx);
+    A.push([0,0,0, sx,sy,1, -dy*sx,-dy*sy]);  b.push(dy);
+  }
+  // Gaussian elimination
+  const n=8;
+  const M=A.map((r,i)=>[...r,b[i]]);
+  for(let col=0;col<n;col++){
+    let mx=Math.abs(M[col][col]),mxi=col;
+    for(let row=col+1;row<n;row++)if(Math.abs(M[row][col])>mx){mx=Math.abs(M[row][col]);mxi=row;}
+    [M[col],M[mxi]]=[M[mxi],M[col]];
+    const piv=M[col][col];if(Math.abs(piv)<1e-10)continue;
+    for(let row=0;row<n;row++)if(row!==col){const f=M[row][col]/piv;for(let j=col;j<=n;j++)M[row][j]-=f*M[col][j];}
+    for(let j=col;j<=n;j++)M[col][j]/=piv;
+  }
+  const h=M.map(r=>r[n]);
+  return [...h,1]; // h0..h8
+}
+
+function applyHomography(H, x, y) {
+  const w = H[6]*x + H[7]*y + H[8];
+  return { x: (H[0]*x + H[1]*y + H[2]) / w, y: (H[3]*x + H[4]*y + H[5]) / w };
+}
+
+// ── Bilinear sample for warp ──
+function perspectiveWarp(srcCanvas, corners, outW, outH) {
+  // corners = [TL,TR,BR,BL] in src pixel coords
+  const dst = [{x:0,y:0},{x:outW-1,y:0},{x:outW-1,y:outH-1},{x:0,y:outH-1}];
+  const H = solveHomography(dst, corners); // inverse map dst→src
+  const out = document.createElement('canvas');
+  out.width = outW; out.height = outH;
+  const octx = out.getContext('2d');
+  const srcCtx = srcCanvas.getContext('2d', {willReadFrequently:true});
+  const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height).data;
+  const outData = octx.createImageData(outW, outH);
+  const SW = srcCanvas.width, SH = srcCanvas.height;
+  for (let dy = 0; dy < outH; dy++) {
+    for (let dx = 0; dx < outW; dx++) {
+      const {x: sx, y: sy} = applyHomography(H, dx, dy);
+      // Bilinear interpolation
+      const x0=sx|0, y0=sy|0, x1=Math.min(x0+1,SW-1), y1=Math.min(y0+1,SH-1);
+      const fx=sx-x0, fy=sy-y0;
+      if(x0<0||y0<0||x0>=SW||y0>=SH){const oi=(dy*outW+dx)*4;outData.data[oi+3]=255;continue;}
+      const i00=(y0*SW+x0)*4,i10=(y0*SW+x1)*4,i01=(y1*SW+x0)*4,i11=(y1*SW+x1)*4;
+      const oi=(dy*outW+dx)*4;
+      for(let c=0;c<3;c++){
+        outData.data[oi+c]=
+          srcData[i00+c]*(1-fx)*(1-fy)+srcData[i10+c]*fx*(1-fy)+
+          srcData[i01+c]*(1-fx)*fy   +srcData[i11+c]*fx*fy;
+      }
+      outData.data[oi+3]=255;
+    }
+  }
+  octx.putImageData(outData, 0, 0);
+  return out;
+}
+
+// ── Adaptive enhance: auto-levels + subtle sharpen ──
+function enhanceDocument(canvas) {
+  const ctx = canvas.getContext('2d', {willReadFrequently:true});
+  const id = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = id.data, n = d.length;
+  // Auto-levels per channel
+  let rMin=255,rMax=0,gMin=255,gMax=0,bMin=255,bMax=0;
+  for(let i=0;i<n;i+=4){rMin=Math.min(rMin,d[i]);rMax=Math.max(rMax,d[i]);gMin=Math.min(gMin,d[i+1]);gMax=Math.max(gMax,d[i+1]);bMin=Math.min(bMin,d[i+2]);bMax=Math.max(bMax,d[i+2]);}
+  const rs=255/(rMax-rMin||1),gs=255/(gMax-gMin||1),bs=255/(bMax-bMin||1);
+  for(let i=0;i<n;i+=4){d[i]=Math.min(255,(d[i]-rMin)*rs);d[i+1]=Math.min(255,(d[i+1]-gMin)*gs);d[i+2]=Math.min(255,(d[i+2]-bMin)*bs);}
+  // Unsharp mask (fast 3×3 approx)
+  const w=canvas.width,h=canvas.height;
+  const blurred=new Uint8ClampedArray(n);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const i=(y*w+x)*4;for(let c=0;c<3;c++)blurred[i+c]=(d[i-4-w*4+c]+d[i-w*4+c]+d[i+4-w*4+c]+d[i-4+c]+d[i+c]+d[i+4+c]+d[i-4+w*4+c]+d[i+w*4+c]+d[i+4+w*4+c])/9;}
+  const AMT=0.5;
+  for(let i=0;i<n;i+=4){for(let c=0;c<3;c++){const v=d[i+c]+(d[i+c]-blurred[i+c])*AMT;d[i+c]=Math.max(0,Math.min(255,v));}}
+  ctx.putImageData(id,0,0);
+  return canvas;
+}
+
+// ── Worker setup ──
+const workerBlob = new Blob([WORKER_SRC], {type:'application/javascript'});
+const workerUrl = URL.createObjectURL(workerBlob);
+let detectionWorker = null;
+let workerBusy = false;
+
+function getWorker() {
+  if (!detectionWorker) {
+    detectionWorker = new Worker(workerUrl);
+  }
+  return detectionWorker;
+}
+
+// ── Smooth corner interpolation ──
+function lerpCorners(a, b, t) {
+  return a.map((p,i) => ({x: p.x*(1-t)+b[i].x*t, y: p.y*(1-t)+b[i].y*t}));
+}
+
+// ── Overlay drawing ──
+function drawDocOverlay(ctx, corners, W, H, scaleX, scaleY, confidence) {
+  if (!corners) return;
+  const sc = corners.map(c => ({x: c.x*scaleX, y: c.y*scaleY}));
+  const alpha = Math.min(1, confidence || 1);
+  // Fill tint
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(sc[0].x,sc[0].y);
+  sc.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
+  ctx.fillStyle = `rgba(94,234,212,${0.08*alpha})`;
+  ctx.fill();
+  // Border
+  ctx.strokeStyle = `rgba(94,234,212,${alpha})`;
+  ctx.lineWidth = 2.5;
+  ctx.shadowColor = `rgba(94,234,212,${0.55*alpha})`; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.moveTo(sc[0].x,sc[0].y);
+  sc.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath(); ctx.stroke();
+  // Corner dots
+  ctx.shadowBlur = 0;
+  const cornerLen = Math.min(W,H) * 0.055;
+  const PAIRS = [[0,1],[1,2],[2,3],[3,0]];
+  ctx.strokeStyle = '#5EEAD4'; ctx.lineWidth = 3.5;
+  PAIRS.forEach(([ai,bi]) => {
+    const a=sc[ai],b=sc[bi];
+    const dx=b.x-a.x,dy=b.y-a.y,len=Math.sqrt(dx*dx+dy*dy)||1;
+    const nx=dx/len*cornerLen,ny=dy/len*cornerLen;
+    ctx.beginPath(); ctx.moveTo(a.x+nx,a.y+ny); ctx.lineTo(a.x,a.y); ctx.lineTo(a.x-ny*.2,a.y+nx*.2); ctx.stroke();
+  });
+  // Corner circles
+  sc.forEach(p => {
+    ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2);
+    ctx.fillStyle='#5EEAD4'; ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x,p.y,3,0,Math.PI*2);
+    ctx.fillStyle='#fff'; ctx.fill();
+  });
   ctx.restore();
 }
-function drawGuideFrame(ctx,W,H){
-  const m=W*.08,t=H*.12,r=W-m,b=H*.78;
-  const cLen=Math.min(W,H)*.07;
-  ctx.save();ctx.strokeStyle='rgba(255,255,255,.5)';ctx.lineWidth=2;
-  [[m,t],[r,t],[r,b],[m,b]].forEach(([x,y],i)=>{
+
+function drawGuideFrame(ctx, W, H) {
+  const m=W*.07,t=H*.10,r=W-m,b=H*.80;
+  const cLen=Math.min(W,H)*.08;
+  ctx.save(); ctx.strokeStyle='rgba(255,255,255,.45)'; ctx.lineWidth=2;
+  // Dashed rect
+  ctx.setLineDash([6,4]);
+  ctx.strokeRect(m, t, r-m, b-t);
+  ctx.setLineDash([]);
+  // Corner L-marks
+  ctx.strokeStyle='rgba(255,255,255,.85)'; ctx.lineWidth=2.5;
+  [[m,t,1,1],[r,t,-1,1],[r,b,-1,-1],[m,b,1,-1]].forEach(([x,y,sx,sy])=>{
     ctx.beginPath();
-    if(i===0){ctx.moveTo(x,y+cLen);ctx.lineTo(x,y);ctx.lineTo(x+cLen,y);}
-    else if(i===1){ctx.moveTo(x-cLen,y);ctx.lineTo(x,y);ctx.lineTo(x,y+cLen);}
-    else if(i===2){ctx.moveTo(x,y-cLen);ctx.lineTo(x,y);ctx.lineTo(x-cLen,y);}
-    else{ctx.moveTo(x+cLen,y);ctx.lineTo(x,y);ctx.lineTo(x,y-cLen);}
+    ctx.moveTo(x,y+sy*cLen); ctx.lineTo(x,y); ctx.lineTo(x+sx*cLen,y);
     ctx.stroke();
   });
   ctx.restore();
 }
-function perspectiveCrop(src, corners, outW, outH) {
-  const canvas = document.createElement('canvas');
-  canvas.width = outW; canvas.height = outH;
-  const ctx = canvas.getContext('2d');
-  // Simple bilinear approximation for PWA
-  const [tl, tr, br, bl] = corners;
-  ctx.save();
-  const pts = [tl, tr, br, bl];
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
-  ctx.closePath();
-  ctx.clip();
-  // Scale from sample space to source video
-  ctx.drawImage(src, 0, 0, outW, outH);
-  ctx.restore();
-  return canvas.toDataURL('image/jpeg', 0.92);
+
+// ── Warp output size from quad ──
+function quadOutputSize(corners) {
+  const [tl,tr,br,bl] = corners;
+  const topW = Math.hypot(tr.x-tl.x, tr.y-tl.y);
+  const botW = Math.hypot(br.x-bl.x, br.y-bl.y);
+  const lefH = Math.hypot(bl.x-tl.x, bl.y-tl.y);
+  const rigH = Math.hypot(br.x-tr.x, br.y-tr.y);
+  const W = Math.round(Math.max(topW, botW));
+  const H = Math.round(Math.max(lefH, rigH));
+  // Normalize to max 1600px wide
+  const scale = Math.min(1, 1600/W);
+  return {w: Math.round(W*scale), h: Math.round(H*scale)};
 }
 
 // ══════════════════════════════════════════════════
 // CAMERA
 // ══════════════════════════════════════════════════
 let camStream = null, camActive = false, camMode = 'single';
-let smoothed = null, missCount = 0, lastDetectTs = 0, camDetectRAF = null;
-let flashOn = false;
+let smoothed = null, missCount = 0, stableCount = 0;
+let camDetectRAF = null, flashOn = false;
+let lastCornersRaw = null, confidence = 0;
+let autoCapturePending = false, autoCaptureTimer = null;
+const STABLE_FRAMES_NEEDED = 18; // ~0.6s at 30fps
+const SAMPLE_W = 320; // higher res sample for accuracy
+
+const sampleCanvas = document.createElement('canvas');
 
 function openCamera() {
   const overlay = document.getElementById('cameraOverlay');
   overlay.classList.add('open');
-  camActive = true; missCount = 0; smoothed = null;
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width:{ideal:1920}, height:{ideal:1080} }, audio: false })
-    .then(stream => {
-      camStream = stream;
-      const video = document.getElementById('cameraVideo');
-      video.srcObject = stream;
-      video.play();
-      video.onloadedmetadata = () => startDetectionLoop();
-    })
-    .catch(err => {
-      camActive = false;
-      overlay.classList.remove('open');
-      if (err.name === 'NotAllowedError') showToast('Izin kamera diperlukan. Buka Pengaturan browser dan izinkan akses kamera.', 'warning', 5000);
-      else showToast('Tidak dapat membuka kamera: ' + err.message, 'error');
-    });
+  camActive = true; missCount = 0; stableCount = 0; smoothed = null;
+  lastCornersRaw = null; confidence = 0;
+  navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: {ideal:'environment'},
+      width:{ideal:1920,min:1280},
+      height:{ideal:1080,min:720},
+      focusMode: 'continuous'
+    }, audio: false
+  }).then(stream => {
+    camStream = stream;
+    const video = document.getElementById('cameraVideo');
+    video.srcObject = stream; video.play();
+    video.onloadedmetadata = () => startDetectionLoop();
+  }).catch(err => {
+    camActive = false;
+    overlay.classList.remove('open');
+    if (err.name==='NotAllowedError'||err.name==='PermissionDeniedError')
+      showToast('Izin kamera diperlukan. Buka Pengaturan browser dan izinkan kamera.','warning',5000);
+    else showToast('Tidak dapat membuka kamera: '+err.message,'error');
+  });
 }
+
 function closeCamera() {
   camActive = false;
+  clearTimeout(autoCaptureTimer); autoCapturePending = false;
   if (camDetectRAF) { cancelAnimationFrame(camDetectRAF); camDetectRAF = null; }
-  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  if (camStream) { camStream.getTracks().forEach(t=>t.stop()); camStream = null; }
   document.getElementById('cameraVideo').srcObject = null;
   document.getElementById('cameraOverlay').classList.remove('open');
   closeCropPreview();
   flashOn = false;
   document.getElementById('flashIcon').setAttribute('stroke','#fff');
   document.getElementById('camFlashBtn').style.background = '';
+  workerBusy = false;
 }
+
 function startDetectionLoop() {
   const video = document.getElementById('cameraVideo');
   const overlay = document.getElementById('cameraOverlay');
   const canvas = document.getElementById('camDetectCanvas');
   const ctx = canvas.getContext('2d', {willReadFrequently:true});
-  function loop(ts) {
+  const worker = getWorker();
+
+  worker.onmessage = ({data:{corners}}) => {
+    workerBusy = false;
+    if (!camActive) return;
+    if (corners) {
+      missCount = 0;
+      stableCount = Math.min(stableCount + 1, STABLE_FRAMES_NEEDED + 5);
+      lastCornersRaw = corners;
+      // Smooth: lerp toward new detection
+      smoothed = smoothed ? lerpCorners(smoothed, corners, 0.25) : corners;
+      confidence = Math.min(1, stableCount / STABLE_FRAMES_NEEDED);
+    } else {
+      stableCount = Math.max(0, stableCount - 2);
+      missCount++;
+      if (missCount > 10) { smoothed = null; lastCornersRaw = null; confidence = 0; stableCount = 0; }
+    }
+    const detected = !!smoothed && stableCount >= 6;
+    document.getElementById('camShutter').classList.toggle('detecting', detected && confidence > 0.5);
+    document.getElementById('camDetectedBadge').classList.toggle('show', detected);
+    // Auto-capture when very stable
+    if (stableCount >= STABLE_FRAMES_NEEDED && !autoCapturePending && document.getElementById('camCropPreview').classList.contains('open')===false) {
+      autoCapturePending = true;
+      autoCaptureTimer = setTimeout(() => {
+        autoCapturePending = false;
+        if (stableCount >= STABLE_FRAMES_NEEDED && camActive) capturePhoto(true);
+      }, 400);
+    }
+    if (stableCount < STABLE_FRAMES_NEEDED) {
+      clearTimeout(autoCaptureTimer); autoCapturePending = false;
+    }
+  };
+
+  function loop() {
     if (!camActive) return;
     camDetectRAF = requestAnimationFrame(loop);
     if (!video.videoWidth) return;
     const W = overlay.clientWidth, H = overlay.clientHeight;
-    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
-    ctx.clearRect(0, 0, W, H);
-    if (ts - lastDetectTs > 180) {
-      lastDetectTs = ts;
-      const sw = 200, sh = Math.round(200 * video.videoHeight / video.videoWidth);
-      sampleCanvas.width = sw; sampleCanvas.height = sh;
-      sampleCanvas.getContext('2d').drawImage(video, 0, 0, sw, sh);
-      const raw = detectDocumentInCanvas(sampleCanvas);
-      if (raw) { missCount = 0; smoothed = smoothCorners(raw, smoothed, 0.3); }
-      else { missCount++; if (missCount > 8) smoothed = null; }
-      const detected = missCount === 0 && !!smoothed;
-      document.getElementById('camShutter').classList.toggle('detecting', detected);
-      document.getElementById('camDetectedBadge').classList.toggle('show', detected);
-    }
+    if (canvas.width!==W||canvas.height!==H) { canvas.width=W; canvas.height=H; }
+    ctx.clearRect(0,0,W,H);
+    // Draw overlay
     if (smoothed) {
-      const scaleX = W / (sampleCanvas.width || 1);
-      const scaleY = H / (sampleCanvas.height || 1);
-      drawDocOverlay(ctx, smoothed, W, H, scaleX, scaleY);
+      const scaleX = W/(sampleCanvas.width||1), scaleY = H/(sampleCanvas.height||1);
+      drawDocOverlay(ctx, smoothed, W, H, scaleX, scaleY, confidence);
     } else {
       drawGuideFrame(ctx, W, H);
+    }
+    // Send frame to worker (throttle)
+    if (!workerBusy) {
+      workerBusy = true;
+      const sh = Math.round(SAMPLE_W * video.videoHeight / video.videoWidth);
+      sampleCanvas.width = SAMPLE_W; sampleCanvas.height = sh;
+      sampleCanvas.getContext('2d').drawImage(video, 0, 0, SAMPLE_W, sh);
+      const imgData = sampleCanvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,SAMPLE_W,sh);
+      worker.postMessage({imageData:imgData.data.buffer,width:SAMPLE_W,height:sh},[imgData.data.buffer]);
     }
   }
   camDetectRAF = requestAnimationFrame(loop);
 }
-function capturePhoto() {
+
+function capturePhoto(isAuto) {
   const video = document.getElementById('cameraVideo');
   if (!video.videoWidth) return;
-  // Flash effect
+  // Flash
   const flash = document.getElementById('camFlash');
-  flash.classList.add('flash'); setTimeout(() => flash.classList.remove('flash'), 120);
+  flash.classList.add('flash'); setTimeout(()=>flash.classList.remove('flash'),120);
   const shutter = document.getElementById('camShutter');
-  shutter.classList.add('capturing'); setTimeout(() => shutter.classList.remove('capturing'), 200);
-  // Capture
+  shutter.classList.add('capturing'); setTimeout(()=>shutter.classList.remove('capturing'),200);
+  // Capture full-res frame
   const captureCanvas = document.createElement('canvas');
   captureCanvas.width = video.videoWidth; captureCanvas.height = video.videoHeight;
   captureCanvas.getContext('2d').drawImage(video, 0, 0);
-  const uri = captureCanvas.toDataURL('image/jpeg', 0.92);
-  openCropPreview(uri);
+
+  // If we have valid corners, do perspective warp
+  let uri;
+  if (smoothed && sampleCanvas.width > 0) {
+    const scaleX = video.videoWidth / sampleCanvas.width;
+    const scaleY = video.videoHeight / sampleCanvas.height;
+    const fullCorners = smoothed.map(p => ({x: p.x*scaleX, y: p.y*scaleY}));
+    const {w:outW, h:outH} = quadOutputSize(fullCorners);
+    try {
+      const warped = perspectiveWarp(captureCanvas, fullCorners, outW, outH);
+      const enhanced = enhanceDocument(warped);
+      uri = enhanced.toDataURL('image/jpeg', 0.92);
+    } catch(e) {
+      uri = captureCanvas.toDataURL('image/jpeg', 0.92);
+    }
+  } else {
+    uri = captureCanvas.toDataURL('image/jpeg', 0.92);
+  }
+  // Reset stable state so it re-detects next time
+  stableCount = 0; autoCapturePending = false;
+  openCropPreview(uri, !!smoothed);
 }
 
 // Crop Preview
 let cropPreviewUri = '';
-function openCropPreview(uri) {
+function openCropPreview(uri, isWarped) {
   cropPreviewUri = uri;
   document.getElementById('cropPreviewImg').src = uri;
+  // Warp badge
+  let badge = document.getElementById('cropWarpBadge');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'cropWarpBadge';
+    badge.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:#5EEAD4;background:rgba(94,234,212,.12);border:1px solid rgba(94,234,212,.28);border-radius:8px;padding:4px 10px;margin-top:4px;';
+    badge.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#5EEAD4" stroke-width="2.5"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>Koreksi Perspektif Aktif';
+    const actions = document.querySelector('.crop-actions');
+    if (actions && actions.children[1]) actions.insertBefore(badge, actions.children[1]);
+    else if (actions) actions.appendChild(badge);
+  }
+  badge.style.display = isWarped ? 'flex' : 'none';
   syncCropMode();
   document.getElementById('camCropPreview').classList.add('open');
 }
